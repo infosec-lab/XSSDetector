@@ -342,6 +342,7 @@ We welcome contributions from the security community! Here's how you can help:
 <div align="center">
 
 **BackSense** - Advanced XSS Vulnerability Scanner for Burp Suite
+
 *Built with ❤️ for the security community*
 
 [![GitHub](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/infosec-lab/backsense)
