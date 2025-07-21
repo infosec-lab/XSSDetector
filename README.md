@@ -9,7 +9,7 @@
 
 *A comprehensive Burp Suite extension for detecting all forms of XSS, client-side injections, and SPA/API abuse using advanced payloads, encoding, and bypass techniques.*
 
-> **Note**: Currently in active development. Core detection engines (SSRF, SSTI, XXE, WAF bypass) are fully functional. Additional UI enhancements and integrations planned for future releases.
+> _**Note**: Currently in active development. Core detection engines are fully functional. Additional UI enhancements and integrations planned for future releases._
 
 </div>
 
