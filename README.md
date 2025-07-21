@@ -1,4 +1,4 @@
-# 🛡️ XSSDetector - Advanced XSS Vulnerability Scanner for Burp Suite
+# ≡ƒ¢í∩┕Å XSSDetector - Advanced XSS Vulnerability Scanner for Burp Suite
 
 [![Build Status](https://github.com/vikaskumar/XSSDetector/workflows/Build%20and%20Test%20XSSDetector/badge.svg)](https://github.com/vikaskumar/XSSDetector/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -8,43 +8,43 @@
 
 > **Production-Ready XSS Detection Engine** - The most advanced Cross-Site Scripting (XSS) vulnerability scanner for Burp Suite, featuring AI-powered context analysis, modern framework detection, and real exploit validation.
 
-## 📋 Table of Contents
+## ≡ƒôï Table of Contents
 
-- [🚀 Features](#-features)
-- [📸 Screenshots](#-screenshots)
-- [🔧 Installation](#-installation)
-- [⚡ Quick Start](#-quick-start)
-- [🎯 Advanced Features](#-advanced-features)
-- [🔍 Detection Capabilities](#-detection-capabilities)
-- [📊 Performance & Statistics](#-performance--statistics)
-- [🛠️ Development](#-development)
-- [🤝 Contributing](#-contributing)
-- [📄 License](#-license)
-- [👨‍💻 Author](#-author)
+- [≡ƒÜÇ Features](#-features)
+- [≡ƒô┕ Screenshots](#-screenshots)
+- [≡ƒöº Installation](#-installation)
+- [ΓÜí Quick Start](#-quick-start)
+- [≡ƒÄ» Advanced Features](#-advanced-features)
+- [≡ƒöì Detection Capabilities](#-detection-capabilities)
+- [≡ƒôè Performance & Statistics](#-performance--statistics)
+- [≡ƒ¢á∩┕Å Development](#-development)
+- [≡ƒñ¥ Contributing](#-contributing)
+- [≡ƒôä License](#-license)
+- [≡ƒæ¿ΓÇì≡ƒÆ┗ Author](#-author)
 
-## 🚀 Features
+## ≡ƒÜÇ Features
 
-### 🔥 Core Detection Engine
+### ≡ƒöÑ Core Detection Engine
 - **AI-Powered Context Analysis** - Intelligent payload selection based on response context
 - **Real Exploit Validation** - Actual vulnerability confirmation, not just reflection detection
 - **Modern Framework Support** - React, Angular, Vue.js, GraphQL, WebSockets
 - **Advanced WAF Bypass** - 50+ evasion techniques for modern security solutions
 - **DOM XSS Detection** - Client-side vulnerability identification
 
-### 🎯 Advanced Capabilities
+### ≡ƒÄ» Advanced Capabilities
 - **Polyglot Payloads** - Multi-context attack vectors
 - **Encoding Bypass Techniques** - Unicode, Base64, URL encoding variants
 - **Template Injection** - Server-side and client-side template attacks
 - **Modern Browser APIs** - WebRTC, Service Workers, WebAssembly exploitation
 - **Session Handling** - Automatic CSRF token and session management
 
-### 📊 Professional Features
+### ≡ƒôè Professional Features
 - **Compliance Reporting** - OWASP, NIST, GDPR compliance validation
 - **Detailed Analytics** - Real-time scanning statistics and performance metrics
 - **Export Capabilities** - HTML, JSON, CSV, XML report formats
 - **Integration Support** - Burp Intruder, Repeater, and Scanner integration
 
-## 📸 Screenshots
+## ≡ƒô┕ Screenshots
 
 ### Scanner Settings & Configuration
 ![Scanner Settings](screenshot/1.Scanner_Settings.png)
@@ -62,7 +62,7 @@
 ![Results Dashboard](screenshot/4.Results.png)
 *Professional vulnerability reporting with exploit generation and remediation guidance.*
 
-## 🔧 Installation
+## ≡ƒöº Installation
 
 ### Prerequisites
 - **Java 8 or higher** (Java 11+ recommended)
@@ -85,14 +85,14 @@
 
 2. **Load into Burp Suite**
    - Open Burp Suite Professional
-   - Go to **Extender** → **Extensions** → **Add**
+   - Go to **Extender** ΓåÆ **Extensions** ΓåÆ **Add**
    - Select **Java** as the extension type
    - Browse to `dist/XSSDetector.jar`
    - Click **Next** and **Close**
 
 3. **Verify Installation**
    - Check the **XSSDetector** tab appears in Burp Suite
-   - Verify the extension loads without errors in the **Extender** → **Output** tab
+   - Verify the extension loads without errors in the **Extender** ΓåÆ **Output** tab
 
 ### Automated Build (GitHub Actions)
 The project includes automated CI/CD pipelines that build and test the extension on multiple platforms:
@@ -104,7 +104,7 @@ The project includes automated CI/CD pipelines that build and test the extension
 # - Automated testing and security scanning
 ```
 
-## ⚡ Quick Start
+## ΓÜí Quick Start
 
 ### Basic Usage
 1. **Configure Target Scope**
@@ -148,7 +148,7 @@ encodingCacheSize.setValue(1000);
 enableEncodingOptimization.setSelected(true);
 ```
 
-## 🎯 Advanced Features
+## ≡ƒÄ» Advanced Features
 
 ### AI-Powered Analysis
 - **Context Recognition**: Automatically identifies HTML, JavaScript, CSS, and attribute contexts
@@ -174,7 +174,7 @@ enableEncodingOptimization.setSelected(true);
 - **Remediation Guidance**: Detailed fix recommendations
 - **Risk Assessment**: Severity and impact analysis
 
-## 🔍 Detection Capabilities
+## ≡ƒöì Detection Capabilities
 
 ### Vulnerability Types
 | Type | Detection Method | Confidence | False Positive Rate |
@@ -200,7 +200,7 @@ enableEncodingOptimization.setSelected(true);
 - **GraphQL**: Query injection, introspection attacks
 - **WebSockets**: Real-time communication channel exploitation
 
-## 📊 Performance & Statistics
+## ≡ƒôè Performance & Statistics
 
 ### Scanning Performance
 - **Speed**: 1000+ requests/minute on standard hardware
@@ -223,25 +223,25 @@ private int scansPerMinute = 0;
 - **Encoding Analysis**: Success rates for different encoding techniques
 - **Framework Detection**: Modern application pattern recognition
 
-## 🛠️ Development
+## ≡ƒ¢á∩┕Å Development
 
 ### Project Structure
 ```
 XSSDetector/
-├── src/burp/                    # Main source code
-│   ├── BurpExtender.java       # Main extension class
-│   ├── Constants.java          # Configuration constants
-│   ├── Settings.java           # Settings management
-│   ├── AdvancedFilteringEngine.java
-│   ├── EnhancedDOMXSSDetector.java
-│   └── ...                     # Additional components
-├── build/                      # Build artifacts
-├── dist/                       # Distribution files
-├── screenshot/                 # Documentation screenshots
-├── .github/                    # GitHub workflows and templates
-├── build.sh                    # Unix build script
-├── build.bat                   # Windows build script
-└── README.md                   # This file
+Γö£ΓöÇΓöÇ src/burp/                    # Main source code
+Γöé   Γö£ΓöÇΓöÇ BurpExtender.java       # Main extension class
+Γöé   Γö£ΓöÇΓöÇ Constants.java          # Configuration constants
+Γöé   Γö£ΓöÇΓöÇ Settings.java           # Settings management
+Γöé   Γö£ΓöÇΓöÇ AdvancedFilteringEngine.java
+Γöé   Γö£ΓöÇΓöÇ EnhancedDOMXSSDetector.java
+Γöé   ΓööΓöÇΓöÇ ...                     # Additional components
+Γö£ΓöÇΓöÇ build/                      # Build artifacts
+Γö£ΓöÇΓöÇ dist/                       # Distribution files
+Γö£ΓöÇΓöÇ screenshot/                 # Documentation screenshots
+Γö£ΓöÇΓöÇ .github/                    # GitHub workflows and templates
+Γö£ΓöÇΓöÇ build.sh                    # Unix build script
+Γö£ΓöÇΓöÇ build.bat                   # Windows build script
+ΓööΓöÇΓöÇ README.md                   # This file
 ```
 
 ### Building from Source
@@ -292,7 +292,7 @@ ls -la dist/XSSDetector.jar
 
 ---
 
-## 🤝 Contributing
+## ≡ƒñ¥ Contributing
 
 We welcome contributions from the security community! Here's how you can help:
 
@@ -319,12 +319,12 @@ We welcome contributions from the security community! Here's how you can help:
 - **Knowledge Sharing**: Help others learn and grow
 - **Security Ethics**: Use responsibly and legally
 
-## 🏆 **Credits**
+## ≡ƒÅå **Credits**
 
 **Vikas Kumar** - *Senior Security Consultant*  
-📧 **Email**: [infoseclab005@gmail.com](mailto:infoseclab005@gmail.com)  
-🔗 **LinkedIn**: [Vikas Kumar](https://www.linkedin.com/in/vikas-k-8b2a495b/)  
-📖 **GitHub**: [@infosec-lab](https://github.com/infosec-lab)  
+≡ƒôº **Email**: [infoseclab005@gmail.com](mailto:infoseclab005@gmail.com)  
+≡ƒöù **LinkedIn**: [Vikas Kumar](https://www.linkedin.com/in/vikas-k-8b2a495b/)  
+≡ƒôû **GitHub**: [@infosec-lab](https://github.com/infosec-lab)  
 
 ### **Special Thanks**
 - **PortSwigger** - For the excellent Burp Suite platform
@@ -338,6 +338,6 @@ We welcome contributions from the security community! Here's how you can help:
 
 **XSSDetector** - Professional Server-Side Vulnerability Detection for Modern Web Applications
 
-*Built with ❤️ for the security community*
+*Built with Γ¥ñ∩┕Å for the security community*
 
-</div>
+</div> 
