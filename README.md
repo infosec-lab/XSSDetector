@@ -1,6 +1,5 @@
 # XSSDetector - Advanced XSS Vulnerability Scanner for Burp Suite
 
-[![Build Status](https://github.com/vikaskumar/XSSDetector/workflows/Build%20and%20Test%20XSSDetector/badge.svg)](https://github.com/vikaskumar/XSSDetector/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Java](https://img.shields.io/badge/Java-8%2B-blue.svg)](https://www.oracle.com/java/)
 [![Burp Suite](https://img.shields.io/badge/Burp%20Suite-2023.1%2B-orange.svg)](https://portswigger.net/burp)
