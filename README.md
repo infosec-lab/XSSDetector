@@ -1,11 +1,17 @@
 # XSSDetector - Advanced XSS Vulnerability Scanner for Burp Suite
 
+<div align="center">
+   
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Java](https://img.shields.io/badge/Java-8%2B-blue.svg)](https://www.oracle.com/java/)
 [![Burp Suite](https://img.shields.io/badge/Burp%20Suite-2023.1%2B-orange.svg)](https://portswigger.net/burp)
 [![Version](https://img.shields.io/badge/Version-2.0.0--Production%20Ready-green.svg)](https://github.com/vikaskumar/XSSDetector/releases)
 
-> **Production-Ready XSS Detection Engine** - The most advanced Cross-Site Scripting (XSS) vulnerability scanner for Burp Suite, featuring AI-powered context analysis, modern framework detection, and real exploit validation.
+*A comprehensive Burp Suite extension for detecting all forms of XSS, client-side injections, and SPA/API abuse using advanced payloads, encoding, and bypass techniques.*
+
+> **Note**: Currently in active development. Core detection engines (SSRF, SSTI, XXE, WAF bypass) are fully functional. Additional UI enhancements and integrations planned for future releases.
+
+</div>
 
 ## Table of Contents
 
@@ -335,8 +341,7 @@ We welcome contributions from the security community! Here's how you can help:
 
 <div align="center">
 
-**BackSense** - Professional Server-Side Vulnerability Detection for Modern Web Applications
-
+**BackSense** - Advanced XSS Vulnerability Scanner for Burp Suite
 *Built with ❤️ for the security community*
 
 [![GitHub](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/infosec-lab/backsense)
