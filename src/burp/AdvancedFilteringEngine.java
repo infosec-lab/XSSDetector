@@ -1228,57 +1228,313 @@ value.contains("\\u1EBF") || // Unicode escape for XSS bypass
     }
     
     /**
-     * Minimal filtering approach - only filter obvious false positives
+     * Advanced filtering approach - IMPROVED to reduce false positives
+     * Filters reflections in safe contexts while preserving legitimate XSS detections
      */
     private boolean shouldFilterMinimal(double confidenceScore, Map reflectionData, IHttpRequestResponse requestResponse) {
-        // Only filter extremely low confidence findings
-        if (confidenceScore < 20.0) {
-            return true;
-        }
-        
-        // Check for obvious false positives only
         String paramValue = (String) reflectionData.get(VALUE);
+
+        // === FILTER 1: Very low confidence without XSS indicators ===
+        if (confidenceScore < 25.0) {
+            if (paramValue != null && containsXSSIndicators(paramValue)) {
+                return false; // Don't filter if it has XSS indicators
+            }
+            return true; // Filter low confidence without indicators
+        }
+
+        // === FILTER 2: Obvious non-XSS patterns ===
         if (paramValue != null) {
-            // Filter only clearly non-XSS patterns
-            if (paramValue.matches("^\\d+$")) { // Only numbers
+            // Pure numeric values
+            if (paramValue.matches("^\\d+$")) {
                 return true;
             }
-            
-            if (paramValue.length() < 3) { // Very short values
+
+            // Very short values without XSS chars
+            if (paramValue.length() < 3 && !containsXSSIndicators(paramValue)) {
                 return true;
             }
-            
+
             // Common non-XSS values
-            String[] commonValues = {"true", "false", "yes", "no", "null", "undefined", "0", "1"};
+            String[] commonValues = {"true", "false", "yes", "no", "null", "undefined", "0", "1", "en", "us"};
             for (String common : commonValues) {
                 if (paramValue.equalsIgnoreCase(common)) {
                     return true;
                 }
             }
         }
-        
-        return false; // Default to NOT filtering (better detection)
+
+        // === FILTER 3: Check if reflection is in safe context ===
+        if (requestResponse != null && paramValue != null) {
+            // Check if payload is safely encoded (HTML entities)
+            if (isPayloadSafelyEncoded(requestResponse, paramValue)) {
+                callbacks.printOutput("[Filter] Payload is safely HTML-encoded - filtering as false positive");
+                return true;
+            }
+
+            // Check if reflection is in a safe context (comments, CDATA, etc.)
+            if (isReflectionInSafeContext(requestResponse, paramValue)) {
+                callbacks.printOutput("[Filter] Reflection is in safe context - filtering as false positive");
+                return true;
+            }
+        }
+
+        // === FILTER 4: Confidence-based filtering ===
+        // Medium confidence (25-50) - filter if no strong XSS indicators
+        if (confidenceScore < 50.0 && paramValue != null && !containsStrongXSSIndicators(paramValue)) {
+            return true;
+        }
+
+        return false; // Don't filter - potential true positive
+    }
+
+    /**
+     * Check if reflection is in a safe (non-executable) context
+     */
+    private boolean isReflectionInSafeContext(IHttpRequestResponse requestResponse, String payload) {
+        try {
+            if (requestResponse == null || payload == null) return false;
+
+            byte[] response = requestResponse.getResponse();
+            if (response == null) return false;
+
+            int bodyOffset = helpers.analyzeResponse(response).getBodyOffset();
+            String responseBody = new String(Arrays.copyOfRange(response, bodyOffset, response.length));
+
+            int payloadPos = responseBody.indexOf(payload);
+            if (payloadPos < 0) return false;
+
+            // Get context around payload
+            int windowStart = Math.max(0, payloadPos - 200);
+            int windowEnd = Math.min(responseBody.length(), payloadPos + payload.length() + 200);
+            String contextBefore = responseBody.substring(windowStart, payloadPos);
+            String contextAfter = responseBody.substring(payloadPos + payload.length(), windowEnd);
+
+            // Check for HTML comment
+            int lastCommentStart = contextBefore.lastIndexOf("<!--");
+            int lastCommentEnd = contextBefore.lastIndexOf("-->");
+            if (lastCommentStart > lastCommentEnd && contextAfter.contains("-->")) {
+                return true; // In HTML comment
+            }
+
+            // Check for CDATA section
+            int lastCDATA = contextBefore.lastIndexOf("<![CDATA[");
+            int lastCDATAEnd = contextBefore.lastIndexOf("]]>");
+            if (lastCDATA > lastCDATAEnd && contextAfter.contains("]]>")) {
+                return true; // In CDATA
+            }
+
+            // Check for JavaScript comment (single-line)
+            int lastNewline = contextBefore.lastIndexOf("\n");
+            String sameLine = (lastNewline >= 0) ? contextBefore.substring(lastNewline) : contextBefore;
+            if (sameLine.contains("//") && !sameLine.contains("://")) {
+                return true; // In JS single-line comment
+            }
+
+            // Check for JavaScript block comment
+            int lastBlockStart = contextBefore.lastIndexOf("/*");
+            int lastBlockEnd = contextBefore.lastIndexOf("*/");
+            if (lastBlockStart > lastBlockEnd && contextAfter.contains("*/")) {
+                return true; // In JS block comment
+            }
+
+            // Check for textarea/xmp (text context)
+            String[] textTags = {"textarea", "xmp", "plaintext"};
+            for (String tag : textTags) {
+                int tagOpen = contextBefore.toLowerCase().lastIndexOf("<" + tag);
+                int tagClose = contextBefore.toLowerCase().lastIndexOf("</" + tag);
+                if (tagOpen > tagClose) {
+                    return true; // In text context element
+                }
+            }
+
+        } catch (Exception e) {
+            // Error - don't filter
+        }
+        return false;
+    }
+
+    /**
+     * Check for STRONG XSS indicators (high confidence patterns)
+     */
+    private boolean containsStrongXSSIndicators(String value) {
+        if (value == null) return false;
+        String lower = value.toLowerCase();
+
+        // Strong indicators that almost certainly indicate XSS attempt
+        return lower.contains("<script") ||
+               lower.contains("javascript:") ||
+               lower.contains("onerror=") ||
+               lower.contains("onload=") ||
+               lower.contains("onclick=") ||
+               lower.contains("onmouseover=") ||
+               lower.contains("onfocus=") ||
+               lower.contains("eval(") ||
+               lower.contains("document.cookie") ||
+               lower.contains("document.write") ||
+               (lower.contains("<") && lower.contains(">") && lower.contains("="));
     }
     
     /**
-     * Minimal filter reason - simple explanations
+     * Check if value contains XSS indicators
+     */
+    private boolean containsXSSIndicators(String value) {
+        if (value == null) return false;
+        
+        String lowerValue = value.toLowerCase();
+        
+        // Check for XSS patterns
+        for (String pattern : XSS_PATTERNS) {
+            if (Pattern.compile(pattern, Pattern.CASE_INSENSITIVE).matcher(value).find()) {
+                return true;
+            }
+        }
+        
+        // Check for HTML tags
+        if (lowerValue.contains("<") && lowerValue.contains(">")) {
+            return true;
+        }
+        
+        // Check for JavaScript protocol
+        if (lowerValue.contains("javascript:") || lowerValue.contains("data:")) {
+            return true;
+        }
+        
+        // Check for event handlers
+        if (Pattern.compile("on\\w+\\s*=", Pattern.CASE_INSENSITIVE).matcher(value).find()) {
+            return true;
+        }
+        
+        // Check for encoded XSS attempts
+        if (ENCODED_PAYLOAD_PATTERN.matcher(value).find() && 
+            (lowerValue.contains("script") || lowerValue.contains("alert"))) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Check if payload is safely encoded in response (not exploitable)
+     * IMPROVED: More thorough encoding detection
+     */
+    private boolean isPayloadSafelyEncoded(IHttpRequestResponse requestResponse, String payload) {
+        try {
+            if (requestResponse == null || payload == null) {
+                return false;
+            }
+
+            // Only check payloads that contain dangerous characters
+            if (!payload.contains("<") && !payload.contains(">") &&
+                !payload.contains("\"") && !payload.contains("'")) {
+                return false; // No dangerous chars to encode
+            }
+
+            byte[] response = requestResponse.getResponse();
+            if (response == null) return false;
+
+            int bodyOffset = helpers.analyzeResponse(response).getBodyOffset();
+            String responseBody = new String(Arrays.copyOfRange(response, bodyOffset, response.length));
+
+            // Check if RAW payload is in response
+            boolean hasRaw = responseBody.contains(payload);
+
+            // If raw payload is present, check for context
+            if (hasRaw) {
+                // Raw payload present - might still be safe if in comment/CDATA
+                // But generally not safe
+                return false;
+            }
+
+            // Raw payload NOT present - check for encoded versions
+
+            // Check 1: Full HTML entity encoding
+            String htmlEncoded = payload.replace("<", "&lt;").replace(">", "&gt;")
+                                       .replace("\"", "&quot;").replace("'", "&#39;");
+            if (responseBody.contains(htmlEncoded)) {
+                callbacks.printOutput("[SafeEncoding] Payload is HTML-entity encoded (full) - SAFE");
+                return true;
+            }
+
+            // Check 2: Partial HTML entity encoding (just < and >)
+            String partialEncoded = payload.replace("<", "&lt;").replace(">", "&gt;");
+            if (responseBody.contains(partialEncoded)) {
+                callbacks.printOutput("[SafeEncoding] Payload is HTML-entity encoded (< >) - SAFE");
+                return true;
+            }
+
+            // Check 3: Numeric HTML entities
+            String numericEncoded = payload.replace("<", "&#60;").replace(">", "&#62;")
+                                          .replace("\"", "&#34;").replace("'", "&#39;");
+            if (responseBody.contains(numericEncoded)) {
+                callbacks.printOutput("[SafeEncoding] Payload is numeric HTML-entity encoded - SAFE");
+                return true;
+            }
+
+            // Check 4: Hex HTML entities
+            String hexEncoded = payload.replace("<", "&#x3c;").replace(">", "&#x3e;")
+                                      .replace("\"", "&#x22;").replace("'", "&#x27;");
+            if (responseBody.contains(hexEncoded) || responseBody.contains(hexEncoded.toUpperCase())) {
+                callbacks.printOutput("[SafeEncoding] Payload is hex HTML-entity encoded - SAFE");
+                return true;
+            }
+
+            // Check 5: JavaScript Unicode escapes
+            String jsUnicodeEncoded = payload.replace("<", "\\u003c").replace(">", "\\u003e")
+                                            .replace("\"", "\\u0022").replace("'", "\\u0027");
+            if (responseBody.contains(jsUnicodeEncoded) || responseBody.contains(jsUnicodeEncoded.toUpperCase())) {
+                callbacks.printOutput("[SafeEncoding] Payload is JS Unicode-escaped - SAFE");
+                return true;
+            }
+
+            // Check 6: URL encoding (if not already URL-encoded payload)
+            if (!payload.contains("%")) {
+                String urlEncoded = helpers.urlEncode(payload);
+                if (responseBody.contains(urlEncoded) && !responseBody.contains(payload)) {
+                    callbacks.printOutput("[SafeEncoding] Payload is URL-encoded in response - SAFE");
+                    return true;
+                }
+            }
+
+            // Check 7: JSON string escaping
+            String jsonEncoded = payload.replace("\\", "\\\\").replace("\"", "\\\"")
+                                       .replace("<", "\\u003c").replace(">", "\\u003e");
+            if (responseBody.contains(jsonEncoded)) {
+                callbacks.printOutput("[SafeEncoding] Payload is JSON-escaped - SAFE");
+                return true;
+            }
+
+            return false; // Not encoded
+        } catch (Exception e) {
+            return false; // On error, don't filter
+        }
+    }
+    
+    /**
+     * Minimal filter reason - detailed explanations for researchers
      */
     private String getMinimalFilterReason(double confidenceScore, Map reflectionData) {
         if (confidenceScore < 20.0) {
-            return "Very low confidence score";
+            String paramValue = (String) reflectionData.get(VALUE);
+            if (paramValue != null && !containsXSSIndicators(paramValue)) {
+                return "Very low confidence score (" + String.format("%.1f", confidenceScore) + "%) - No XSS indicators detected";
+            }
+            return "Very low confidence score (" + String.format("%.1f", confidenceScore) + "%)";
         }
         
         String paramValue = (String) reflectionData.get(VALUE);
         if (paramValue != null) {
-            if (paramValue.matches("^\\d+$")) {
-                return "Numeric value only";
+            if (paramValue.matches("^\\d+$") && !paramValue.contains("<") && !paramValue.contains(">")) {
+                return "Numeric value only - No XSS characters present";
             }
-            if (paramValue.length() < 3) {
-                return "Value too short";
+            if (paramValue.length() < 3 && !containsXSSIndicators(paramValue)) {
+                return "Value too short (< 3 chars) - No XSS indicators";
             }
+            
+            // Note: RequestResponse check would require it to be passed in reflectionData
+            // For now, we rely on confidence score and XSS indicators
         }
         
-        return "Common non-XSS value";
+        return "Common non-XSS value pattern";
     }
 }
 

@@ -10,6 +10,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.nio.charset.StandardCharsets;
 
 import static burp.Constants.*;
 
@@ -17,12 +18,11 @@ import static burp.Constants.*;
  * XSSDetector - Professional XSS Vulnerability Scanner for Burp Suite
  * Clean, production-ready implementation with essential XSS detection capabilities
  */
-public class BurpExtender implements IBurpExtender, IScannerCheck, ITab {
+public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpListener, IExtensionStateListener {
     
     // Plugin Information
     public static final String PLUGIN_NAME = "XSSDetector";
-    public static final String AUTHOR = "Vikas Kumar";
-    public static final String VERSION = "2.0.0 - Production Ready";
+    public static final String VERSION = "2.0.0";
     
     // Core Burp Suite Components
     private IBurpExtenderCallbacks callbacks;
@@ -50,6 +50,15 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab {
     private JCheckBox enableFrameworkSpecific;
     private JCheckBox enableEncodingBypass;
     private JCheckBox enableCSPBypass;
+    private JCheckBox enablePolyglotPayloads;
+    private JCheckBox enableBrowserSpecific;
+    private JCheckBox enableJSFucker;
+    private JCheckBox enablePrototypePollution;
+    private JCheckBox enablePostMessageXSS;
+    private JCheckBox enableWebComponents;
+    private JCheckBox enableShadowDOM;
+    private JCheckBox enableWebAssembly;
+    private JCheckBox enableModernBrowserAPI;
     
     // Analysis and Reporting
     private JCheckBox detailedReporting;
@@ -71,6 +80,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab {
     private EnhancedClientSideAttackDetector clientSideDetector;
     private EnhancedAggressive aggressiveDetector;
     private AdvancedFilteringEngine filteringEngine;
+    private ModernXSSAnalyzer modernXssAnalyzer;
     
     // Scan Control
     private volatile boolean scanInProgress = false;
@@ -83,6 +93,10 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab {
     private final Set<String> confirmedVulnerabilities = ConcurrentHashMap.newKeySet();
     private final Map<String, Long> parameterTestHistory = new ConcurrentHashMap<>();
     private static final long PARAMETER_COOLDOWN_MS = 300000; // 5 minutes between tests
+
+    // IMPROVED: Global reported issues tracker to prevent duplicates
+    private final Set<String> reportedIssueKeys = ConcurrentHashMap.newKeySet();
+    private static final int MAX_REPORTED_ISSUES_CACHE = 5000;
     
     // Scan Status Management
     private enum ScanStatus {
@@ -130,58 +144,167 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab {
         
         // Register scanner check
         callbacks.registerScannerCheck(this);
-        
+
         // Add custom tab
         callbacks.addSuiteTab(this);
-        
+
+        // Register HTTP listener for REAL-TIME monitoring of all Burp tools
+        callbacks.registerHttpListener(this);
+
+        // Register extension state listener for cleanup on unload
+        callbacks.registerExtensionStateListener(this);
+
         // Initialize thread management
         initializeThreadManagement();
-        
+
         // Log initialization
-        callbacks.printOutput("[" + PLUGIN_NAME + "] Initialized successfully - Production Ready");
-        callbacks.printOutput("[" + PLUGIN_NAME + "] Author: " + AUTHOR);
+        callbacks.printOutput("[" + PLUGIN_NAME + "] Initialized successfully");
         callbacks.printOutput("[" + PLUGIN_NAME + "] Version: " + VERSION);
+        callbacks.printOutput("[" + PLUGIN_NAME + "] Real-time HTTP monitoring: ENABLED");
     }
     
     /**
-     * Initialize all detection engines
+     * Initialize all detection engines with comprehensive error handling
      */
     private void initializeDetectionEngines() {
+        int enginesInitialized = 0;
+        int enginesFailed = 0;
+        
         try {
-            // Core reflection detection
-            this.checkReflection = new CheckReflection(helpers, callbacks, settings);
-            
-            // Modern architecture detection
-            this.architectureDetector = new ModernArchitectureDetector(helpers, callbacks, settings);
-            
-            // JSON analysis
-            this.jsonAnalyzer = new AdvancedJSONAnalyzer(helpers, callbacks, settings);
-            
-            // Issue reporting
-            this.issueReporter = new EnhancedIssueReporter(helpers, callbacks, settings);
-            
-            // AI context analysis
-            this.aiAnalyzer = new AIContextAnalyzer(helpers, callbacks, settings);
-            
-            // Engine integration
-            this.engineIntegrationManager = new EngineIntegrationManager(helpers, callbacks, settings);
-            
+            // CRITICAL: Initialize PerformanceMonitor and ErrorRecoverySystem FIRST
+            // These are needed by CheckReflection and other engines
             // Performance monitoring
-            this.performanceMonitor = new PerformanceMonitor(callbacks);
+            try {
+                this.performanceMonitor = new PerformanceMonitor(callbacks);
+                enginesInitialized++;
+            } catch (Exception e) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize PerformanceMonitor: " + e.getMessage());
+                enginesFailed++;
+            }
             
             // Error recovery
-            this.errorRecoverySystem = new ErrorRecoverySystem(callbacks, performanceMonitor);
+            try {
+                this.errorRecoverySystem = new ErrorRecoverySystem(callbacks, performanceMonitor);
+                enginesInitialized++;
+            } catch (Exception e) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize ErrorRecoverySystem: " + e.getMessage());
+                enginesFailed++;
+            }
             
-            // Enhanced detection engines
-            this.domXssDetector = new EnhancedDOMXSSDetector(helpers, callbacks, settings);
-            this.clientSideDetector = new EnhancedClientSideAttackDetector(helpers, callbacks, settings);
-            this.aggressiveDetector = new EnhancedAggressive(helpers, callbacks, settings);
-            this.filteringEngine = new AdvancedFilteringEngine(helpers, callbacks, settings);
+            // Issue reporting (critical - must succeed, initialize early)
+            try {
+                this.issueReporter = new EnhancedIssueReporter(helpers, callbacks, settings);
+                enginesInitialized++;
+            } catch (Exception e) {
+                callbacks.printError("[" + PLUGIN_NAME + "] CRITICAL: Failed to initialize EnhancedIssueReporter: " + e.getMessage());
+                enginesFailed++;
+            }
             
-            callbacks.printOutput("[" + PLUGIN_NAME + "] All detection engines initialized successfully");
+            // Core reflection detection (now has access to performanceMonitor and errorRecoverySystem)
+            try {
+                this.checkReflection = new CheckReflection(helpers, callbacks, settings, performanceMonitor, errorRecoverySystem);
+                enginesInitialized++;
+            } catch (Exception e) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize CheckReflection: " + e.getMessage());
+                enginesFailed++;
+            }
             
-                        } catch (Exception e) {
-            callbacks.printError("[" + PLUGIN_NAME + "] Error initializing detection engines: " + e.getMessage());
+            // Modern architecture detection
+            try {
+                this.architectureDetector = new ModernArchitectureDetector(helpers, callbacks, settings);
+                enginesInitialized++;
+            } catch (Exception e) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize ModernArchitectureDetector: " + e.getMessage());
+                enginesFailed++;
+            }
+            
+            // JSON analysis
+            try {
+                this.jsonAnalyzer = new AdvancedJSONAnalyzer(helpers, callbacks, settings);
+                enginesInitialized++;
+            } catch (Exception e) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize AdvancedJSONAnalyzer: " + e.getMessage());
+                enginesFailed++;
+            }
+            
+            // AI context analysis
+            try {
+                this.aiAnalyzer = new AIContextAnalyzer(helpers, callbacks, settings);
+                enginesInitialized++;
+            } catch (Exception e) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize AIContextAnalyzer: " + e.getMessage());
+                enginesFailed++;
+            }
+            
+            // Enhanced detection engines - Create these FIRST so they can be injected
+            try {
+                this.domXssDetector = new EnhancedDOMXSSDetector(helpers, callbacks, settings);
+                enginesInitialized++;
+            } catch (Exception e) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize EnhancedDOMXSSDetector: " + e.getMessage());
+                enginesFailed++;
+            }
+
+            try {
+                this.clientSideDetector = new EnhancedClientSideAttackDetector(helpers, callbacks, settings);
+                enginesInitialized++;
+            } catch (Exception e) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize EnhancedClientSideAttackDetector: " + e.getMessage());
+                enginesFailed++;
+            }
+
+            try {
+                this.aggressiveDetector = new EnhancedAggressive(helpers, callbacks, settings);
+                enginesInitialized++;
+            } catch (Exception e) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize EnhancedAggressive: " + e.getMessage());
+                enginesFailed++;
+            }
+
+            try {
+                this.filteringEngine = new AdvancedFilteringEngine(helpers, callbacks, settings);
+                enginesInitialized++;
+            } catch (Exception e) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize AdvancedFilteringEngine: " + e.getMessage());
+                enginesFailed++;
+            }
+
+            // Modern XSS analyzer for advanced attack vectors
+            try {
+                this.modernXssAnalyzer = new ModernXSSAnalyzer(helpers, callbacks, settings);
+                enginesInitialized++;
+            } catch (Exception e) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize ModernXSSAnalyzer: " + e.getMessage());
+                enginesFailed++;
+            }
+
+            // Engine integration - INJECT existing engines to avoid duplication
+            try {
+                this.engineIntegrationManager = new EngineIntegrationManager(
+                    helpers, callbacks, settings,
+                    domXssDetector,           // Inject existing instance
+                    clientSideDetector,       // Inject existing instance
+                    architectureDetector,     // Inject existing instance
+                    filteringEngine,          // Inject existing instance
+                    aggressiveDetector        // Inject existing instance
+                );
+                enginesInitialized++;
+            } catch (Exception e) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize EngineIntegrationManager: " + e.getMessage());
+                enginesFailed++;
+            }
+            
+            callbacks.printOutput("[" + PLUGIN_NAME + "] Detection engines initialized: " + enginesInitialized + " successful, " + enginesFailed + " failed");
+            
+            if (enginesFailed > 0) {
+                callbacks.printError("[" + PLUGIN_NAME + "] WARNING: Some detection engines failed to initialize. Functionality may be limited.");
+            }
+            
+        } catch (Exception e) {
+            callbacks.printError("[" + PLUGIN_NAME + "] Critical error initializing detection engines: " + e.getMessage());
+            if (settings != null && settings.getVerboseLogging()) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Stack trace: " + java.util.Arrays.toString(e.getStackTrace()));
+            }
         }
     }
     
@@ -237,6 +360,15 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab {
         enableFrameworkSpecific = new JCheckBox("Framework Specific", settings.getEnableFrameworkSpecific());
         enableEncodingBypass = new JCheckBox("Encoding Bypass", settings.getEnableEncodingBypass());
         enableCSPBypass = new JCheckBox("CSP Bypass", settings.getEnableCSPBypass());
+        enablePolyglotPayloads = new JCheckBox("Polyglot Payloads", settings.getEnablePolyglotPayloads());
+        enableBrowserSpecific = new JCheckBox("Browser-Specific Payloads", settings.getEnableBrowserSpecific());
+        enableJSFucker = new JCheckBox("JSF*ck Payloads", settings.getEnableJSFucker());
+        enablePrototypePollution = new JCheckBox("Prototype Pollution Payloads", settings.getEnablePrototypePollution());
+        enablePostMessageXSS = new JCheckBox("postMessage Payloads", settings.getEnablePostMessageXSS());
+        enableWebComponents = new JCheckBox("Web Components Payloads", settings.getEnableWebComponents());
+        enableShadowDOM = new JCheckBox("Shadow DOM Payloads", settings.getEnableShadowDOM());
+        enableWebAssembly = new JCheckBox("WebAssembly Payloads", settings.getEnableWebAssembly());
+        enableModernBrowserAPI = new JCheckBox("Modern Browser API Payloads", settings.getEnableModernBrowserAPI());
         
         // Reporting settings
         detailedReporting = new JCheckBox("Detailed Reporting", settings.getDetailedReporting());
@@ -279,46 +411,206 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab {
         
         gbc.gridx = 1; gbc.gridy = 6;
         panel.add(enableCSPBypass, gbc);
-        
+
+        // Payload packs (advanced coverage)
         gbc.gridx = 0; gbc.gridy = 7; gbc.gridwidth = 2;
+        panel.add(new JLabel("Payload Packs:"), gbc);
+
+        gbc.gridwidth = 1;
+        gbc.gridx = 0; gbc.gridy = 8;
+        panel.add(enablePolyglotPayloads, gbc);
+        gbc.gridx = 1; gbc.gridy = 8;
+        panel.add(enableBrowserSpecific, gbc);
+
+        gbc.gridx = 0; gbc.gridy = 9;
+        panel.add(enableJSFucker, gbc);
+        gbc.gridx = 1; gbc.gridy = 9;
+        panel.add(enablePrototypePollution, gbc);
+
+        gbc.gridx = 0; gbc.gridy = 10;
+        panel.add(enablePostMessageXSS, gbc);
+        gbc.gridx = 1; gbc.gridy = 10;
+        panel.add(enableWebComponents, gbc);
+
+        gbc.gridx = 0; gbc.gridy = 11;
+        panel.add(enableShadowDOM, gbc);
+        gbc.gridx = 1; gbc.gridy = 11;
+        panel.add(enableWebAssembly, gbc);
+
+        gbc.gridx = 0; gbc.gridy = 12;
+        panel.add(enableModernBrowserAPI, gbc);
+        
+        gbc.gridx = 0; gbc.gridy = 15; gbc.gridwidth = 2;
         panel.add(new JLabel("Reporting:"), gbc);
         
-        gbc.gridx = 0; gbc.gridy = 8; gbc.gridwidth = 1;
+        gbc.gridx = 0; gbc.gridy = 16; gbc.gridwidth = 1;
         panel.add(detailedReporting, gbc);
         
-        gbc.gridx = 1; gbc.gridy = 8;
+        gbc.gridx = 1; gbc.gridy = 16;
         panel.add(exploitGeneration, gbc);
         
-        gbc.gridx = 0; gbc.gridy = 9;
+        gbc.gridx = 0; gbc.gridy = 17;
         panel.add(verboseLogging, gbc);
+        
+        // ADVANCED: Add cache management button
+        gbc.gridx = 0; gbc.gridy = 18; gbc.gridwidth = 2;
+        JButton clearCacheButton = new JButton("Clear Response Cache");
+        clearCacheButton.addActionListener(e -> {
+            ResponseCache cache = EnhancedAggressive.getResponseCache();
+            if (cache != null) {
+                cache.clearCache();
+                callbacks.printOutput("[" + PLUGIN_NAME + "] Response cache cleared");
+            }
+        });
+        panel.add(clearCacheButton, gbc);
+        
+        // ADVANCED: Add statistics display
+        gbc.gridx = 0; gbc.gridy = 19; gbc.gridwidth = 2;
+        JButton showStatsButton = new JButton("Show Cache Statistics");
+        showStatsButton.addActionListener(e -> showCacheStatistics());
+        panel.add(showStatsButton, gbc);
         
         return panel;
     }
     
     /**
-     * Create content type management panel
+     * Show cache and tracking statistics
+     */
+    private void showCacheStatistics() {
+        try {
+            StringBuilder stats = new StringBuilder();
+            stats.append("=== XSSDetector Advanced Statistics ===\n\n");
+            
+            // Response cache statistics
+            ResponseCache cache = EnhancedAggressive.getResponseCache();
+            if (cache != null) {
+                Map<String, Object> cacheStats = cache.getStatistics();
+                stats.append("Response Cache:\n");
+                stats.append("  Size: ").append(cacheStats.get("size")).append(" entries\n");
+                stats.append("  Hits: ").append(cacheStats.get("hits")).append("\n");
+                stats.append("  Misses: ").append(cacheStats.get("misses")).append("\n");
+                double hitRate = (Double) cacheStats.get("hitRate");
+                stats.append("  Hit Rate: ").append(String.format("%.2f%%", hitRate * 100)).append("\n\n");
+            }
+            
+            // Payload tracker statistics
+            PayloadSuccessTracker tracker = EnhancedAggressive.getPayloadTracker();
+            if (tracker != null) {
+                Map<String, Object> trackerStats = tracker.getStatistics();
+                stats.append("Payload Success Tracker:\n");
+                stats.append("  Total Payloads: ").append(trackerStats.get("totalPayloads")).append("\n");
+                stats.append("  Successful Payloads: ").append(trackerStats.get("successfulPayloads")).append("\n");
+                stats.append("  Recent Successes: ").append(trackerStats.get("recentSuccesses")).append("\n");
+                double avgRate = (Double) trackerStats.get("averageSuccessRate");
+                stats.append("  Average Success Rate: ").append(String.format("%.2f%%", avgRate * 100)).append("\n\n");
+                
+                // Show top payloads
+                List<String> topPayloads = tracker.getTopPayloads(5);
+                if (!topPayloads.isEmpty()) {
+                    stats.append("Top 5 Payloads:\n");
+                    for (int i = 0; i < topPayloads.size(); i++) {
+                        String payload = topPayloads.get(i);
+                        double rate = tracker.getSuccessRate(payload);
+                        stats.append("  ").append(i + 1).append(". ").append(payload.substring(0, Math.min(50, payload.length())))
+                             .append(" (").append(String.format("%.2f%%", rate * 100)).append(")\n");
+                    }
+                    stats.append("\n");
+                }
+            }
+            
+            // Reflection tracker statistics
+            ParameterReflectionTracker reflectionTracker = EnhancedAggressive.getReflectionTracker();
+            if (reflectionTracker != null) {
+                Map<String, Object> reflectionStats = reflectionTracker.getStatistics();
+                stats.append("Parameter Reflection Tracker:\n");
+                stats.append("  Reflecting Parameters: ").append(reflectionStats.get("reflectingParameters")).append("\n");
+                stats.append("  Non-Reflecting Parameters: ").append(reflectionStats.get("nonReflectingParameters")).append("\n");
+                stats.append("  Total Tracked: ").append(reflectionStats.get("totalTrackedParameters")).append("\n");
+            }
+            
+            // Show in dialog
+            JTextArea textArea = new JTextArea(stats.toString());
+            textArea.setEditable(false);
+            textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+            JScrollPane scrollPane = new JScrollPane(textArea);
+            scrollPane.setPreferredSize(new Dimension(600, 400));
+            
+            JOptionPane.showMessageDialog(panel, scrollPane, 
+                "XSSDetector Statistics", JOptionPane.INFORMATION_MESSAGE);
+            
+            callbacks.printOutput("[" + PLUGIN_NAME + "] Statistics displayed");
+            
+        } catch (Exception e) {
+            callbacks.printError("[" + PLUGIN_NAME + "] Error showing statistics: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Create content type management panel - FULLY WIRED TO SETTINGS
      */
     private JPanel createContentTypePanel() {
         JPanel panel = new JPanel(new BorderLayout());
-        panel.setBorder(BorderFactory.createTitledBorder("Content Type Management"));
+        panel.setBorder(BorderFactory.createTitledBorder("Content Type Management - Client-Side Injection Detection"));
         
-        // Create table
-        String[] columnNames = {"Content Type", "Status"};
-        Object[][] data = {};
-        model = new DefaultTableModel(data, columnNames);
+        // CRITICAL: Use Settings to get content types (fully wired)
+        ArrayList<Object[]> contentTypesList = settings.getContentTypes();
+        
+        // Create table with proper column names
+        String[] columnNames = {"Enabled", "Content Type"};
+        Object[][] data = new Object[contentTypesList.size()][2];
+        for (int i = 0; i < contentTypesList.size(); i++) {
+            Object[] row = contentTypesList.get(i);
+            if (row != null && row.length >= 2) {
+                data[i][0] = row[1]; // Enabled status
+                data[i][1] = row[0]; // Content type
+            } else {
+                // Handle invalid row data
+                data[i][0] = true;
+                data[i][1] = "";
+            }
+        }
+        
+        // Create table model that saves to Settings
+        model = new DefaultTableModel(data, columnNames) {
+            @Override
+            public Class<?> getColumnClass(int columnIndex) {
+                if (columnIndex == 0) return Boolean.class; // Enabled checkbox
+                return String.class; // Content type
+            }
+            
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return true; // Both columns editable
+            }
+            
+            @Override
+            public void setValueAt(Object value, int row, int column) {
+                super.setValueAt(value, row, column);
+                // CRITICAL: Save to Settings immediately when changed
+                saveContentTypesToSettings();
+            }
+        };
+        
         table = new JTable(model);
+        table.getColumnModel().getColumn(0).setPreferredWidth(60);
+        table.getColumnModel().getColumn(1).setPreferredWidth(400);
         
         // Create buttons
         addButton = new JButton("Add");
         deleteButton = new JButton("Delete");
-        contentTypeTextField = new JTextField(20);
+        JButton resetButton = new JButton("Reset to Defaults");
+        contentTypeTextField = new JTextField(30);
         
         // Create button panel
-        JPanel buttonPanel = new JPanel();
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
         buttonPanel.add(new JLabel("Content Type:"));
         buttonPanel.add(contentTypeTextField);
         buttonPanel.add(addButton);
         buttonPanel.add(deleteButton);
+        buttonPanel.add(resetButton);
+        
+        // Add reset button listener
+        resetButton.addActionListener(e -> resetContentTypesToDefaults());
         
         panel.add(new JScrollPane(table), BorderLayout.CENTER);
         panel.add(buttonPanel, BorderLayout.SOUTH);
@@ -327,61 +619,293 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab {
     }
     
     /**
-     * Initialize event listeners
+     * Save content types from table to Settings - FULLY WIRED WITH NULL CHECKS
      */
-    private void initListeners() {
-        // Settings change listeners
-        scopeOnly.addActionListener(e -> settings.setScopeOnly(scopeOnly.isSelected()));
-        aggressiveMode.addActionListener(e -> settings.setAggressiveMode(aggressiveMode.isSelected()));
-        checkContext.addActionListener(e -> settings.setCheckContext(checkContext.isSelected()));
-        modernDetection.addActionListener(e -> settings.setModernDetection(modernDetection.isSelected()));
-        domXssDetection.addActionListener(e -> settings.setDomXssDetection(domXssDetection.isSelected()));
-        cspAnalysis.addActionListener(e -> settings.setCspAnalysis(cspAnalysis.isSelected()));
-        enableWAFBypass.addActionListener(e -> settings.setEnableWAFBypass(enableWAFBypass.isSelected()));
-        enableFrameworkSpecific.addActionListener(e -> settings.setEnableFrameworkSpecific(enableFrameworkSpecific.isSelected()));
-        enableEncodingBypass.addActionListener(e -> settings.setEnableEncodingBypass(enableEncodingBypass.isSelected()));
-        enableCSPBypass.addActionListener(e -> settings.setEnableCSPBypass(enableCSPBypass.isSelected()));
-        detailedReporting.addActionListener(e -> settings.setDetailedReporting(detailedReporting.isSelected()));
-        exploitGeneration.addActionListener(e -> settings.setExploitGeneration(exploitGeneration.isSelected()));
-        verboseLogging.addActionListener(e -> settings.setVerboseLogging(verboseLogging.isSelected()));
-        
-        // Content type management listeners
-        addButton.addActionListener(e -> addContentType());
-        deleteButton.addActionListener(e -> deleteContentType());
-        
-        // Table selection listener
-        table.getSelectionModel().addListSelectionListener(e -> {
-            if (!e.getValueIsAdjusting()) {
-                int selectedRow = table.getSelectedRow();
-                if (selectedRow >= 0) {
-                    contentTypeTextField.setText((String) table.getValueAt(selectedRow, 0));
+    private void saveContentTypesToSettings() {
+        try {
+            if (model == null || settings == null) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Cannot save content types: model or settings is null");
+                return;
+            }
+            
+            ArrayList<Object[]> contentTypesList = new ArrayList<>();
+            for (int i = 0; i < model.getRowCount(); i++) {
+                try {
+                    Boolean enabled = (Boolean) model.getValueAt(i, 0);
+                    String contentType = (String) model.getValueAt(i, 1);
+                    if (contentType != null && !contentType.trim().isEmpty()) {
+                        contentTypesList.add(new Object[]{contentType.trim(), enabled != null ? enabled : true});
+                    }
+                } catch (Exception e) {
+                    // Skip invalid rows
+                    callbacks.printError("[" + PLUGIN_NAME + "] Error processing row " + i + ": " + e.getMessage());
                 }
             }
-        });
+            
+            settings.setContentTypes(contentTypesList);
+            settings.saveContentTypes();
+            callbacks.printOutput("[" + PLUGIN_NAME + "] Content types saved: " + contentTypesList.size() + " entries");
+            
+        } catch (Exception e) {
+            callbacks.printError("[" + PLUGIN_NAME + "] Error saving content types: " + e.getMessage());
+            if (settings != null && settings.getVerboseLogging()) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Stack trace: " + java.util.Arrays.toString(e.getStackTrace()));
+            }
+        }
     }
     
     /**
-     * Add content type to allowed list
+     * Reset content types to defaults
+     */
+    private void resetContentTypesToDefaults() {
+        try {
+            model.setRowCount(0); // Clear table
+            ArrayList<Object[]> defaults = new ArrayList<>();
+            for (String contentType : Constants.MODERN_DEFAULT_CONTENT_TYPES) {
+                // Only enable text/html and application/json by default
+                boolean enabled = "text/html".equals(contentType) || "application/json".equals(contentType);
+                defaults.add(new Object[]{contentType, enabled});
+                model.addRow(new Object[]{enabled, contentType});
+            }
+            settings.setContentTypes(defaults);
+            settings.saveContentTypes();
+            callbacks.printOutput("[" + PLUGIN_NAME + "] Reset content types to defaults (only text/html and application/json enabled)");
+        } catch (Exception e) {
+            callbacks.printError("Error resetting content types: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Initialize event listeners - FULLY WIRED WITH NULL CHECKS
+     */
+    private void initListeners() {
+        try {
+            // CRITICAL: Verify all UI components are initialized before attaching listeners
+            if (scopeOnly == null || aggressiveMode == null || checkContext == null || 
+                modernDetection == null || domXssDetection == null || cspAnalysis == null ||
+                enableWAFBypass == null || enableFrameworkSpecific == null || enableEncodingBypass == null ||
+                enableCSPBypass == null || enablePolyglotPayloads == null || enableBrowserSpecific == null ||
+                enableJSFucker == null || enablePrototypePollution == null || enablePostMessageXSS == null ||
+                enableWebComponents == null || enableShadowDOM == null || enableWebAssembly == null ||
+                enableModernBrowserAPI == null || detailedReporting == null || exploitGeneration == null ||
+                verboseLogging == null || addButton == null || deleteButton == null || table == null ||
+                contentTypeTextField == null || settings == null) {
+                callbacks.printError("[" + PLUGIN_NAME + "] CRITICAL: UI components not initialized before attaching listeners");
+                return;
+            }
+            
+            // Settings change listeners - All properly wired to Settings with immediate persistence
+            scopeOnly.addActionListener(e -> {
+                if (settings != null) settings.setScopeOnly(scopeOnly.isSelected());
+            });
+            aggressiveMode.addActionListener(e -> {
+                if (settings != null) settings.setAggressiveMode(aggressiveMode.isSelected());
+            });
+            checkContext.addActionListener(e -> {
+                if (settings != null) settings.setCheckContext(checkContext.isSelected());
+            });
+            modernDetection.addActionListener(e -> {
+                if (settings != null) settings.setModernDetection(modernDetection.isSelected());
+            });
+            domXssDetection.addActionListener(e -> {
+                if (settings != null) settings.setDomXssDetection(domXssDetection.isSelected());
+            });
+            cspAnalysis.addActionListener(e -> {
+                if (settings != null) settings.setCspAnalysis(cspAnalysis.isSelected());
+            });
+            enableWAFBypass.addActionListener(e -> {
+                if (settings != null) settings.setEnableWAFBypass(enableWAFBypass.isSelected());
+            });
+            enableFrameworkSpecific.addActionListener(e -> {
+                if (settings != null) settings.setEnableFrameworkSpecific(enableFrameworkSpecific.isSelected());
+            });
+            enableEncodingBypass.addActionListener(e -> {
+                if (settings != null) settings.setEnableEncodingBypass(enableEncodingBypass.isSelected());
+            });
+            enableCSPBypass.addActionListener(e -> {
+                if (settings != null) settings.setEnableCSPBypass(enableCSPBypass.isSelected());
+            });
+            enablePolyglotPayloads.addActionListener(e -> {
+                if (settings != null) settings.setEnablePolyglotPayloads(enablePolyglotPayloads.isSelected());
+            });
+            enableBrowserSpecific.addActionListener(e -> {
+                if (settings != null) settings.setEnableBrowserSpecific(enableBrowserSpecific.isSelected());
+            });
+            enableJSFucker.addActionListener(e -> {
+                if (settings != null) settings.setEnableJSFucker(enableJSFucker.isSelected());
+            });
+            enablePrototypePollution.addActionListener(e -> {
+                if (settings != null) settings.setEnablePrototypePollution(enablePrototypePollution.isSelected());
+            });
+            enablePostMessageXSS.addActionListener(e -> {
+                if (settings != null) settings.setEnablePostMessageXSS(enablePostMessageXSS.isSelected());
+            });
+            enableWebComponents.addActionListener(e -> {
+                if (settings != null) settings.setEnableWebComponents(enableWebComponents.isSelected());
+            });
+            enableShadowDOM.addActionListener(e -> {
+                if (settings != null) settings.setEnableShadowDOM(enableShadowDOM.isSelected());
+            });
+            enableWebAssembly.addActionListener(e -> {
+                if (settings != null) settings.setEnableWebAssembly(enableWebAssembly.isSelected());
+            });
+            enableModernBrowserAPI.addActionListener(e -> {
+                if (settings != null) settings.setEnableModernBrowserAPI(enableModernBrowserAPI.isSelected());
+            });
+            detailedReporting.addActionListener(e -> {
+                if (settings != null) settings.setDetailedReporting(detailedReporting.isSelected());
+            });
+            exploitGeneration.addActionListener(e -> {
+                if (settings != null) settings.setExploitGeneration(exploitGeneration.isSelected());
+            });
+            verboseLogging.addActionListener(e -> {
+                if (settings != null) settings.setVerboseLogging(verboseLogging.isSelected());
+            });
+            
+            // Content type management listeners - Fully wired to Settings
+            addButton.addActionListener(e -> {
+                if (model != null && contentTypeTextField != null && settings != null) {
+                    addContentType();
+                }
+            });
+            deleteButton.addActionListener(e -> {
+                if (table != null && model != null && settings != null) {
+                    deleteContentType();
+                }
+            });
+            
+            // Table selection listener - Updates text field when row is selected
+            if (table != null && contentTypeTextField != null) {
+                table.getSelectionModel().addListSelectionListener(e -> {
+                    if (!e.getValueIsAdjusting() && table != null && contentTypeTextField != null) {
+                        try {
+                            int selectedRow = table.getSelectedRow();
+                            if (selectedRow >= 0 && model != null) {
+                                // Column 1 contains the content-type string; column 0 is the enabled checkbox
+                                Object ct = model.getValueAt(selectedRow, 1);
+                                contentTypeTextField.setText(ct != null ? ct.toString() : "");
+                            }
+                        } catch (Exception ex) {
+                            // Silently handle selection errors
+                        }
+                    }
+                });
+            }
+            
+            callbacks.printOutput("[" + PLUGIN_NAME + "] All UI listeners initialized and fully wired to Settings");
+            
+        } catch (Exception e) {
+            callbacks.printError("[" + PLUGIN_NAME + "] Error initializing listeners: " + e.getMessage());
+            if (settings != null && settings.getVerboseLogging()) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Stack trace: " + java.util.Arrays.toString(e.getStackTrace()));
+            }
+        }
+    }
+    
+    /**
+     * Add content type to allowed list - FULLY WIRED TO SETTINGS WITH VALIDATION
      */
     private void addContentType() {
-        String contentType = contentTypeTextField.getText().trim();
-        if (!contentType.isEmpty()) {
-            model.addRow(new Object[]{contentType, "Allowed"});
-            contentTypeTextField.setText("");
-            callbacks.printOutput("[" + PLUGIN_NAME + "] Added content type: " + contentType);
+        try {
+            if (contentTypeTextField == null || model == null || settings == null) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Cannot add content type: UI components not initialized");
+                return;
+            }
+            
+            String contentType = contentTypeTextField.getText().trim();
+            if (contentType.isEmpty()) {
+                callbacks.printOutput("[" + PLUGIN_NAME + "] Content type cannot be empty");
+                return;
+            }
+            
+            // Validate content type format (basic validation)
+            if (!contentType.contains("/") && !contentType.equals("*")) {
+                callbacks.printOutput("[" + PLUGIN_NAME + "] Invalid content type format (should be like 'text/html' or '*'): " + contentType);
+                return;
+            }
+            
+            // Check if already exists
+            boolean exists = false;
+            for (int i = 0; i < model.getRowCount(); i++) {
+                try {
+                    String existing = (String) model.getValueAt(i, 1);
+                    if (contentType.equalsIgnoreCase(existing)) {
+                        exists = true;
+                        break;
+                    }
+                } catch (Exception e) {
+                    // Skip invalid rows
+                }
+            }
+            
+            if (!exists) {
+                model.addRow(new Object[]{true, contentType});
+                saveContentTypesToSettings();
+                contentTypeTextField.setText("");
+                callbacks.printOutput("[" + PLUGIN_NAME + "] Added content type: " + contentType);
+            } else {
+                callbacks.printOutput("[" + PLUGIN_NAME + "] Content type already exists: " + contentType);
+            }
+            
+        } catch (Exception e) {
+            callbacks.printError("[" + PLUGIN_NAME + "] Error adding content type: " + e.getMessage());
+            if (settings != null && settings.getVerboseLogging()) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Stack trace: " + java.util.Arrays.toString(e.getStackTrace()));
+            }
         }
     }
     
     /**
-     * Delete selected content type
+     * Delete selected content type - FULLY WIRED TO SETTINGS WITH VALIDATION
      */
     private void deleteContentType() {
-        int selectedRow = table.getSelectedRow();
-        if (selectedRow >= 0) {
-            String contentType = (String) table.getValueAt(selectedRow, 0);
+        try {
+            if (table == null || model == null || settings == null) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Cannot delete content type: UI components not initialized");
+                return;
+            }
+            
+            int selectedRow = table.getSelectedRow();
+            if (selectedRow < 0) {
+                callbacks.printOutput("[" + PLUGIN_NAME + "] Please select a content type to delete");
+                return;
+            }
+            
+            if (selectedRow >= model.getRowCount()) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Invalid row selected: " + selectedRow);
+                return;
+            }
+            
+            String contentType = (String) model.getValueAt(selectedRow, 1);
             model.removeRow(selectedRow);
-            callbacks.printOutput("[" + PLUGIN_NAME + "] Removed content type: " + contentType);
+            saveContentTypesToSettings();
+            callbacks.printOutput("[" + PLUGIN_NAME + "] Removed content type: " + (contentType != null ? contentType : "unknown"));
+            
+        } catch (Exception e) {
+            callbacks.printError("[" + PLUGIN_NAME + "] Error deleting content type: " + e.getMessage());
+            if (settings != null && settings.getVerboseLogging()) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Stack trace: " + java.util.Arrays.toString(e.getStackTrace()));
+            }
         }
+    }
+    
+    /**
+     * Get response content type from HTTP response
+     */
+    private String getResponseContentType(IHttpRequestResponse requestResponse) {
+        try {
+            byte[] response = requestResponse.getResponse();
+            IResponseInfo responseInfo = helpers.analyzeResponse(response);
+            for (String header : responseInfo.getHeaders()) {
+                if (header.toLowerCase().startsWith("content-type:")) {
+                    String contentType = header.substring(13).trim().split(";")[0].trim();
+                    return contentType;
+                }
+            }
+        } catch (Exception e) {
+            // Ignore errors
+        }
+        return null;
     }
     
     /**
@@ -413,21 +937,62 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab {
         try {
             // Skip if scan is paused
             if (scanPaused) {
-                    return issues;
-            }
-            
-            // Check if in scope
-            if (scopeOnly.isSelected() && !callbacks.isInScope(helpers.analyzeRequest(baseRequestResponse).getUrl())) {
                 return issues;
             }
             
-            // Perform comprehensive XSS detection
-            issues.addAll(performComprehensiveXSSDetection(baseRequestResponse));
+            // Check if in scope
+            if (settings.getScopeOnly() && !callbacks.isInScope(helpers.analyzeRequest(baseRequestResponse).getUrl())) {
+                return issues;
+            }
             
-                    } catch (Exception e) {
+            // CRITICAL: Step 1 - Basic reflection detection (always enabled - foundation)
+            // This is the core detection that matches reflector plugin behavior
+            if (checkReflection != null) {
+                try {
+                    List<IScanIssue> reflectionIssues = checkReflection.doPassiveScan(baseRequestResponse);
+                    if (reflectionIssues != null && !reflectionIssues.isEmpty()) {
+                        issues.addAll(reflectionIssues);
+                        callbacks.printOutput("[" + PLUGIN_NAME + "] CheckReflection found " + reflectionIssues.size() + " issues");
+                    }
+                } catch (Exception e) {
+                    callbacks.printError("[" + PLUGIN_NAME + "] Error in CheckReflection passive scan: " + e.getMessage());
+                    if (settings.getVerboseLogging()) {
+                        callbacks.printError("[" + PLUGIN_NAME + "] Stack trace: " + java.util.Arrays.toString(e.getStackTrace()));
+                    }
+                }
+            }
+            
+            // CRITICAL: Step 2 - Additional comprehensive XSS detection (if enabled)
+            // Only run if CheckReflection didn't find issues or if advanced features are enabled
+            if (issues.isEmpty() || settings.getModernDetection() || settings.getDomXssDetection()) {
+                List<IScanIssue> comprehensiveIssues = performComprehensiveXSSDetection(baseRequestResponse);
+                if (comprehensiveIssues != null && !comprehensiveIssues.isEmpty()) {
+                    issues.addAll(comprehensiveIssues);
+                    callbacks.printOutput("[" + PLUGIN_NAME + "] Comprehensive detection found " + comprehensiveIssues.size() + " additional issues");
+                }
+            }
+            
+        } catch (Exception e) {
             callbacks.printError("[" + PLUGIN_NAME + "] Error in passive scan: " + e.getMessage());
+            if (settings != null && settings.getVerboseLogging()) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Stack trace: " + java.util.Arrays.toString(e.getStackTrace()));
+            }
         }
         
+        // CRITICAL: Ensure all issues are reported to Burp with deduplication
+        if (!issues.isEmpty()) {
+            callbacks.printOutput("[" + PLUGIN_NAME + "] Total issues found in passive scan: " + issues.size());
+            int reported = 0;
+            for (IScanIssue issue : issues) {
+                if (reportIssueWithDedup(issue)) {
+                    reported++;
+                }
+            }
+            if (reported < issues.size()) {
+                callbacks.printOutput("[" + PLUGIN_NAME + "] Duplicates filtered: " + (issues.size() - reported));
+            }
+        }
+
         return issues;
     }
 
@@ -442,120 +1007,1519 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab {
     }
 
             // Check if in scope
-            if (scopeOnly.isSelected() && !callbacks.isInScope(helpers.analyzeRequest(baseRequestResponse).getUrl())) {
+            if (settings.getScopeOnly() && !callbacks.isInScope(helpers.analyzeRequest(baseRequestResponse).getUrl())) {
         return issues;
     }
 
             // Perform active XSS detection
-            issues.addAll(performActiveXSSDetection(baseRequestResponse, insertionPoint));
-            
+            List<IScanIssue> activeIssues = performActiveXSSDetection(baseRequestResponse, insertionPoint);
+            if (activeIssues != null && !activeIssues.isEmpty()) {
+                issues.addAll(activeIssues);
+                callbacks.printOutput("[" + PLUGIN_NAME + "] Active scan found " + activeIssues.size() + " issues");
+                // Report with deduplication
+                for (IScanIssue issue : activeIssues) {
+                    reportIssueWithDedup(issue);
+                }
+            }
+
         } catch (Exception e) {
             callbacks.printError("[" + PLUGIN_NAME + "] Error in active scan: " + e.getMessage());
         }
-        
+
         return issues;
     }
 
     @Override
     public int consolidateDuplicateIssues(IScanIssue existingIssue, IScanIssue newIssue) {
-        // Return -1 to keep existing issue, 0 to keep new issue, 1 to merge
-        return -1; // Keep existing issue by default
+        // IMPROVED: Comprehensive duplicate detection
+        // Return -1 to keep existing issue, 0 to keep both, 1 to keep new issue only
+        try {
+            // Must have same URL (base comparison)
+            if (!existingIssue.getUrl().equals(newIssue.getUrl())) {
+                return 0; // Different URLs - keep both
+            }
+
+            String existingName = existingIssue.getIssueName();
+            String newName = newIssue.getIssueName();
+
+            // If exact same issue name, it's a duplicate
+            if (existingName != null && newName != null && existingName.equals(newName)) {
+                callbacks.printOutput("[" + PLUGIN_NAME + "] Duplicate filtered: " + existingName);
+                return -1; // Keep existing
+            }
+
+            // Check for same parameter in issue name (e.g., "XSS - Reflected - query" vs "XSS - DOM - query")
+            String existingParam = extractParameterFromIssueName(existingName);
+            String newParam = extractParameterFromIssueName(newName);
+
+            if (existingParam != null && newParam != null && existingParam.equals(newParam)) {
+                // Same parameter - check if same vulnerability type
+                boolean existingIsXSS = existingName != null && existingName.toLowerCase().contains("xss");
+                boolean newIsXSS = newName != null && newName.toLowerCase().contains("xss");
+
+                if (existingIsXSS && newIsXSS) {
+                    // Both are XSS for same parameter - compare severity/confidence
+                    String existingSev = existingIssue.getSeverity();
+                    String newSev = newIssue.getSeverity();
+
+                    // Keep the higher severity one
+                    int existingScore = getSeverityScore(existingSev);
+                    int newScore = getSeverityScore(newSev);
+
+                    if (newScore > existingScore) {
+                        callbacks.printOutput("[" + PLUGIN_NAME + "] Duplicate (higher severity): keeping new issue for " + newParam);
+                        return 1; // Keep new (higher severity)
+                    } else {
+                        callbacks.printOutput("[" + PLUGIN_NAME + "] Duplicate filtered for parameter: " + existingParam);
+                        return -1; // Keep existing
+                    }
+                }
+            }
+
+            // Also check issue detail for same payload
+            String existingDetail = existingIssue.getIssueDetail();
+            String newDetail = newIssue.getIssueDetail();
+
+            if (existingDetail != null && newDetail != null) {
+                // Extract payload from details and compare
+                String existingPayload = extractPayloadFromDetail(existingDetail);
+                String newPayload = extractPayloadFromDetail(newDetail);
+
+                if (existingPayload != null && newPayload != null && existingPayload.equals(newPayload)) {
+                    callbacks.printOutput("[" + PLUGIN_NAME + "] Duplicate (same payload) filtered");
+                    return -1; // Same payload = duplicate
+                }
+            }
+
+            return 0; // Different issues - keep both
+        } catch (Exception e) {
+            return -1; // On error, keep existing
+        }
     }
-    
+
     /**
-     * Perform comprehensive XSS detection
+     * IMPROVED: Report an issue with built-in deduplication
+     * Returns true if issue was reported, false if it was a duplicate
+     */
+    private boolean reportIssueWithDedup(IScanIssue issue) {
+        if (issue == null) return false;
+
+        try {
+            // Generate unique key for this issue
+            String issueKey = generateIssueKey(issue);
+
+            // Check if already reported
+            if (reportedIssueKeys.contains(issueKey)) {
+                if (settings != null && settings.getVerboseLogging()) {
+                    callbacks.printOutput("[" + PLUGIN_NAME + "] Duplicate issue skipped: " + issue.getIssueName());
+                }
+                return false;
+            }
+
+            // Clean up old entries if cache is full
+            if (reportedIssueKeys.size() >= MAX_REPORTED_ISSUES_CACHE) {
+                // Clear half the cache (simple cleanup strategy)
+                int toRemove = MAX_REPORTED_ISSUES_CACHE / 2;
+                Iterator<String> iter = reportedIssueKeys.iterator();
+                while (iter.hasNext() && toRemove > 0) {
+                    iter.next();
+                    iter.remove();
+                    toRemove--;
+                }
+            }
+
+            // Add to reported set and report to Burp
+            reportedIssueKeys.add(issueKey);
+            callbacks.addScanIssue(issue);
+
+            callbacks.printOutput("[" + PLUGIN_NAME + "] Issue reported: " + issue.getIssueName());
+            return true;
+        } catch (Exception e) {
+            // Log but don't fail
+            if (settings != null && settings.getVerboseLogging()) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Error reporting issue: " + e.getMessage());
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Generate a unique key for an issue to detect duplicates
+     */
+    private String generateIssueKey(IScanIssue issue) {
+        StringBuilder key = new StringBuilder();
+
+        // URL (without query string for path-based dedup)
+        if (issue.getUrl() != null) {
+            key.append(issue.getUrl().getProtocol()).append("://");
+            key.append(issue.getUrl().getHost());
+            if (issue.getUrl().getPort() != -1 && issue.getUrl().getPort() != issue.getUrl().getDefaultPort()) {
+                key.append(":").append(issue.getUrl().getPort());
+            }
+            key.append(issue.getUrl().getPath());
+        }
+
+        // Issue type/name
+        key.append("|").append(issue.getIssueName() != null ? issue.getIssueName() : "unknown");
+
+        // Extract parameter from issue detail if possible
+        String param = extractParameterFromIssueName(issue.getIssueName());
+        if (param != null) {
+            key.append("|").append(param);
+        }
+
+        // Also try to extract from issue detail
+        String detail = issue.getIssueDetail();
+        if (detail != null) {
+            String payloadKey = extractPayloadFromDetail(detail);
+            if (payloadKey != null && payloadKey.length() > 10) {
+                // Use first 50 chars of payload as part of key
+                key.append("|").append(payloadKey.substring(0, Math.min(50, payloadKey.length())));
+            }
+        }
+
+        return key.toString();
+    }
+
+    /**
+     * Extract parameter name from issue name
+     * Example: "Cross-Site Scripting (XSS) - Reflected - query" -> "query"
+     */
+    private String extractParameterFromIssueName(String issueName) {
+        if (issueName == null) return null;
+
+        // Split by " - " and get last part
+        String[] parts = issueName.split(" - ");
+        if (parts.length >= 3) {
+            return parts[parts.length - 1].trim();
+        }
+        return null;
+    }
+
+    /**
+     * Get numeric score for severity comparison
+     */
+    private int getSeverityScore(String severity) {
+        if (severity == null) return 0;
+        switch (severity.toLowerCase()) {
+            case "critical": return 4;
+            case "high": return 3;
+            case "medium": return 2;
+            case "low": return 1;
+            case "information": return 0;
+            default: return 0;
+        }
+    }
+
+    /**
+     * Extract payload from issue detail HTML
+     */
+    private String extractPayloadFromDetail(String detail) {
+        if (detail == null) return null;
+
+        // Look for payload in <code> tags or after "Payload:" text
+        int codeStart = detail.indexOf("<code>");
+        int codeEnd = detail.indexOf("</code>");
+        if (codeStart >= 0 && codeEnd > codeStart) {
+            return detail.substring(codeStart + 6, codeEnd).trim();
+        }
+
+        // Look for "Payload:" or "payload:"
+        int payloadIdx = detail.toLowerCase().indexOf("payload:");
+        if (payloadIdx >= 0) {
+            int start = payloadIdx + 8;
+            int end = detail.indexOf("<", start);
+            if (end < 0) end = Math.min(start + 100, detail.length());
+            return detail.substring(start, end).trim();
+        }
+
+        return null;
+    }
+
+    // ============== REAL-TIME HTTP MONITORING ==============
+
+    /**
+     * IHttpListener implementation - Process HTTP messages in REAL-TIME
+     * This method is called for ALL HTTP traffic through Burp (Proxy, Repeater, Intruder, etc.)
+     */
+    @Override
+    public void processHttpMessage(int toolFlag, boolean messageIsRequest, IHttpRequestResponse messageInfo) {
+        // Only process responses (not requests)
+        if (messageIsRequest) {
+            return;
+        }
+
+        // Skip if scan is paused
+        if (scanPaused) {
+            return;
+        }
+
+        // Skip if response is null
+        if (messageInfo == null || messageInfo.getResponse() == null) {
+            return;
+        }
+
+        // Check scope if enabled
+        try {
+            if (settings != null && settings.getScopeOnly()) {
+                if (!callbacks.isInScope(helpers.analyzeRequest(messageInfo).getUrl())) {
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            // Continue processing if scope check fails
+        }
+
+        // Get tool name for logging
+        String toolName = getToolNameFromFlag(toolFlag);
+
+        // Process based on tool type - run async to avoid blocking
+        scanningExecutor.submit(() -> {
+            try {
+                // Perform real-time passive scan
+                List<IScanIssue> issues = performRealTimePassiveScan(messageInfo, toolFlag);
+
+                // Report any issues found
+                if (issues != null && !issues.isEmpty()) {
+                    int reported = 0;
+                    for (IScanIssue issue : issues) {
+                        if (reportIssueWithDedup(issue)) {
+                            reported++;
+                        }
+                    }
+                    if (settings != null && settings.getVerboseLogging() && reported > 0) {
+                        callbacks.printOutput("[" + PLUGIN_NAME + "] Real-time scan (" + toolName + ") reported " + reported + " issue(s)");
+                    }
+                }
+            } catch (Exception e) {
+                if (settings != null && settings.getVerboseLogging()) {
+                    callbacks.printError("[" + PLUGIN_NAME + "] Error in real-time scan: " + e.getMessage());
+                }
+            }
+        });
+    }
+
+    /**
+     * Perform real-time passive scan on HTTP response
+     */
+    private List<IScanIssue> performRealTimePassiveScan(IHttpRequestResponse messageInfo, int toolFlag) {
+        List<IScanIssue> issues = new ArrayList<>();
+
+        try {
+            // Check content type
+            String contentType = getResponseContentType(messageInfo);
+            if (contentType == null || !isRelevantContentType(contentType)) {
+                return issues;
+            }
+
+            // Perform reflection detection (core functionality)
+            if (checkReflection != null) {
+                try {
+                    List<IScanIssue> reflectionIssues = checkReflection.doPassiveScan(messageInfo);
+                    if (reflectionIssues != null) {
+                        issues.addAll(reflectionIssues);
+                    }
+                } catch (Exception e) {
+                    if (settings != null && settings.getVerboseLogging()) {
+                        callbacks.printError("[" + PLUGIN_NAME + "] Error in real-time reflection check: " + e.getMessage());
+                    }
+                }
+            }
+
+            // DOM XSS detection for Proxy traffic (high value for real-time)
+            if (toolFlag == IBurpExtenderCallbacks.TOOL_PROXY && settings != null && settings.getDomXssDetection()) {
+                if (domXssDetector != null) {
+                    try {
+                        EnhancedDOMXSSDetector.DOMXSSResult domResult = domXssDetector.analyzeDOMXSS(messageInfo);
+                        if (domResult != null && domResult.isVulnerable()) {
+                            IScanIssue domIssue = createDOMXSSIssue(messageInfo, domResult);
+                            if (domIssue != null) {
+                                issues.add(domIssue);
+                            }
+                        }
+                    } catch (Exception e) {
+                        if (settings != null && settings.getVerboseLogging()) {
+                            callbacks.printError("[" + PLUGIN_NAME + "] Error in real-time DOM XSS check: " + e.getMessage());
+                        }
+                    }
+                }
+            }
+
+            // Client-side attack detection for modern architectures
+            if (settings != null && settings.getModernDetection()) {
+                if (clientSideDetector != null) {
+                    try {
+                        EnhancedClientSideAttackDetector.ClientSideAttackResult clientResult =
+                            clientSideDetector.analyzeClientSideAttacks(messageInfo);
+                        if (clientResult != null && clientResult.isVulnerable()) {
+                            IScanIssue clientIssue = createClientSideIssue(messageInfo, clientResult);
+                            if (clientIssue != null) {
+                                issues.add(clientIssue);
+                            }
+                        }
+                    } catch (Exception e) {
+                        if (settings != null && settings.getVerboseLogging()) {
+                            callbacks.printError("[" + PLUGIN_NAME + "] Error in real-time client-side check: " + e.getMessage());
+                        }
+                    }
+                }
+            }
+
+        } catch (Exception e) {
+            if (settings != null && settings.getVerboseLogging()) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Error in real-time passive scan: " + e.getMessage());
+            }
+        }
+
+        return issues;
+    }
+
+    /**
+     * Check if content type is relevant for XSS scanning
+     */
+    private boolean isRelevantContentType(String contentType) {
+        if (contentType == null) return false;
+        String lower = contentType.toLowerCase();
+        return lower.contains("html") || lower.contains("javascript") ||
+               lower.contains("json") || lower.contains("xml") ||
+               lower.contains("text/plain");
+    }
+
+    /**
+     * Get tool name from tool flag for logging
+     */
+    private String getToolNameFromFlag(int toolFlag) {
+        switch (toolFlag) {
+            case IBurpExtenderCallbacks.TOOL_PROXY: return "Proxy";
+            case IBurpExtenderCallbacks.TOOL_REPEATER: return "Repeater";
+            case IBurpExtenderCallbacks.TOOL_INTRUDER: return "Intruder";
+            case IBurpExtenderCallbacks.TOOL_SCANNER: return "Scanner";
+            case IBurpExtenderCallbacks.TOOL_SPIDER: return "Spider";
+            case IBurpExtenderCallbacks.TOOL_TARGET: return "Target";
+            case IBurpExtenderCallbacks.TOOL_EXTENDER: return "Extender";
+            default: return "Unknown(" + toolFlag + ")";
+        }
+    }
+
+    /**
+     * Create a DOM XSS issue from detection result
+     */
+    private IScanIssue createDOMXSSIssue(IHttpRequestResponse messageInfo, EnhancedDOMXSSDetector.DOMXSSResult result) {
+        if (issueReporter != null) {
+            Map<String, Object> vulnData = new HashMap<>();
+            vulnData.put("vulnerabilityType", "DOM XSS");
+            vulnData.put("confidence", result.getConfidenceLevel());
+            vulnData.put("riskLevel", result.getRiskLevel());
+            vulnData.put("sourceSinkAnalysis", result.getSourceSinkAnalysis());
+            return issueReporter.createEnhancedXSSIssue(messageInfo, vulnData);
+        }
+        return null;
+    }
+
+    /**
+     * Create client-side issue from detection result
+     */
+    private IScanIssue createClientSideIssue(IHttpRequestResponse messageInfo,
+            EnhancedClientSideAttackDetector.ClientSideAttackResult result) {
+        if (issueReporter != null) {
+            Map<String, Object> vulnData = new HashMap<>();
+            vulnData.put("vulnerabilityType", "Client-Side Attack");
+            vulnData.put("confidence", result.getConfidenceLevel());
+            vulnData.put("riskScore", result.getRiskScore());
+            vulnData.put("exploitPOC", result.getExploitPOC());
+            return issueReporter.createEnhancedXSSIssue(messageInfo, vulnData);
+        }
+        return null;
+    }
+
+    /**
+     * Create issue from Modern XSS Analyzer vulnerability result
+     * Handles: DOM Clobbering, mXSS, Prototype Pollution, PostMessage XSS,
+     * Service Worker, Import Maps, Trusted Types, GraphQL XSS, WebSocket XSS
+     */
+    private IScanIssue createModernXSSIssue(IHttpRequestResponse messageInfo,
+            ModernXSSAnalyzer.VulnerabilityInfo vuln) {
+        try {
+            IRequestInfo reqInfo = helpers.analyzeRequest(messageInfo);
+            java.net.URL url = reqInfo.getUrl();
+
+            // Map severity to Burp severity levels
+            String burpSeverity;
+            switch (vuln.severity.toLowerCase()) {
+                case "critical": burpSeverity = "High"; break;
+                case "high": burpSeverity = "High"; break;
+                case "medium": burpSeverity = "Medium"; break;
+                case "low": burpSeverity = "Low"; break;
+                default: burpSeverity = "Information"; break;
+            }
+
+            // Map confidence to Burp confidence levels
+            String burpConfidence;
+            if (vuln.confidence >= 80) {
+                burpConfidence = "Certain";
+            } else if (vuln.confidence >= 60) {
+                burpConfidence = "Firm";
+            } else {
+                burpConfidence = "Tentative";
+            }
+
+            // Build professional issue detail
+            StringBuilder detail = new StringBuilder();
+            detail.append("<h3>").append(vuln.type).append("</h3>\n");
+            detail.append("<table border='1' cellpadding='5'>\n");
+            detail.append("<tr><td><b>Severity</b></td><td>").append(vuln.severity).append("</td></tr>\n");
+            detail.append("<tr><td><b>Confidence</b></td><td>").append(String.format("%.0f%%", vuln.confidence)).append("</td></tr>\n");
+            detail.append("<tr><td><b>Parameter</b></td><td>").append(escapeHtml(vuln.parameter)).append("</td></tr>\n");
+            detail.append("</table>\n\n");
+
+            detail.append("<h4>Description</h4>\n");
+            detail.append("<p>").append(escapeHtml(vuln.description)).append("</p>\n\n");
+
+            detail.append("<h4>Proof of Concept Payload</h4>\n");
+            detail.append("<pre>").append(escapeHtml(vuln.payload)).append("</pre>\n\n");
+
+            detail.append("<h4>Remediation</h4>\n");
+            detail.append("<p>").append(escapeHtml(vuln.remediation)).append("</p>\n");
+
+            // Build issue background based on vulnerability type
+            String background = getModernXSSBackground(vuln.type);
+
+            return new IScanIssue() {
+                @Override
+                public java.net.URL getUrl() { return url; }
+
+                @Override
+                public String getIssueName() {
+                    return "Cross-site Scripting - " + vuln.type + " (" + vuln.parameter + ")";
+                }
+
+                @Override
+                public int getIssueType() { return 0x00500100; } // Custom XSS type
+
+                @Override
+                public String getSeverity() { return burpSeverity; }
+
+                @Override
+                public String getConfidence() { return burpConfidence; }
+
+                @Override
+                public String getIssueBackground() { return background; }
+
+                @Override
+                public String getRemediationBackground() { return vuln.remediation; }
+
+                @Override
+                public String getIssueDetail() { return detail.toString(); }
+
+                @Override
+                public String getRemediationDetail() { return null; }
+
+                @Override
+                public IHttpRequestResponse[] getHttpMessages() {
+                    return new IHttpRequestResponse[] { messageInfo };
+                }
+
+                @Override
+                public IHttpService getHttpService() { return messageInfo.getHttpService(); }
+            };
+        } catch (Exception e) {
+            callbacks.printError("[" + PLUGIN_NAME + "] Error creating Modern XSS issue: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Get background information for modern XSS vulnerability types
+     */
+    private String getModernXSSBackground(String vulnType) {
+        String lowerType = vulnType.toLowerCase();
+
+        if (lowerType.contains("dom clobbering")) {
+            return "<p><b>DOM Clobbering</b> is an attack where HTML elements with specific <code>id</code> or " +
+                   "<code>name</code> attributes can override JavaScript variables and DOM properties. " +
+                   "When JavaScript code accesses window or document properties without proper validation, " +
+                   "attackers can inject HTML elements to control these values and potentially achieve XSS.</p>" +
+                   "<p>Example: <code>&lt;form name=\"config\"&gt;&lt;input name=\"url\" value=\"javascript:alert(1)\"&gt;&lt;/form&gt;</code></p>";
+        } else if (lowerType.contains("mxss") || lowerType.contains("mutation")) {
+            return "<p><b>Mutation XSS (mXSS)</b> exploits differences between HTML parsing and serialization. " +
+                   "When content is parsed, modified, and then re-serialized (e.g., via innerHTML), the output " +
+                   "can differ from the input in ways that bypass sanitizers. Context-switching elements like " +
+                   "&lt;noscript&gt;, &lt;style&gt;, and SVG/MathML are common mXSS vectors.</p>" +
+                   "<p>Modern sanitizers like DOMPurify have specific mXSS protections that should be enabled.</p>";
+        } else if (lowerType.contains("prototype pollution")) {
+            return "<p><b>Prototype Pollution XSS</b> occurs when attackers can modify JavaScript object prototypes " +
+                   "through vulnerable object merge/extend operations. If polluted properties reach DOM sinks like " +
+                   "innerHTML, they can achieve XSS. This is common with libraries like lodash.merge() or jQuery.extend().</p>" +
+                   "<p>Test payloads typically use <code>__proto__</code> or <code>constructor.prototype</code>.</p>";
+        } else if (lowerType.contains("postmessage")) {
+            return "<p><b>PostMessage XSS</b> occurs when web applications process postMessage events without " +
+                   "properly validating the message origin. Attackers can send malicious messages from their own " +
+                   "pages to trigger XSS in vulnerable message handlers.</p>" +
+                   "<p>Always validate <code>event.origin</code> against a strict allowlist, not using " +
+                   "contains/startsWith/endsWith which can be bypassed.</p>";
+        } else if (lowerType.contains("service worker")) {
+            return "<p><b>Service Worker Vulnerabilities</b> can lead to persistent XSS through cache poisoning " +
+                   "or complete site takeover if the Service Worker script URL is injectable. Service Workers " +
+                   "can intercept all network requests, making them high-value targets.</p>";
+        } else if (lowerType.contains("import map")) {
+            return "<p><b>Import Maps Injection</b> allows attackers to redirect JavaScript module imports to " +
+                   "malicious URLs. If import map content is controllable by user input, attackers can make " +
+                   "the application load arbitrary JavaScript.</p>";
+        } else if (lowerType.contains("trusted types")) {
+            return "<p><b>Trusted Types Bypass</b> vulnerabilities occur when the Trusted Types policy is too " +
+                   "permissive (e.g., returns input unchanged) or when some sinks are not covered by the policy. " +
+                   "Trusted Types is a browser security feature designed to prevent DOM XSS.</p>";
+        } else if (lowerType.contains("graphql")) {
+            return "<p><b>GraphQL XSS</b> can occur when GraphQL query results are rendered in HTML without " +
+                   "proper encoding. The flexible query nature of GraphQL may allow attackers to inject " +
+                   "malicious content through mutation inputs or query parameters.</p>";
+        } else if (lowerType.contains("websocket")) {
+            return "<p><b>WebSocket XSS</b> occurs when WebSocket message content is used in DOM sinks like " +
+                   "innerHTML without sanitization. If attackers can inject messages (e.g., through CSWSH) " +
+                   "or control the WebSocket URL, they can achieve XSS.</p>";
+        }
+
+        return "<p>This is a modern XSS attack vector that exploits advanced browser features or JavaScript APIs. " +
+               "Traditional XSS filters may not protect against these attacks.</p>";
+    }
+
+    /**
+     * Escape HTML special characters for safe display
+     */
+    private String escapeHtml(String input) {
+        if (input == null) return "";
+        return input.replace("&", "&amp;")
+                   .replace("<", "&lt;")
+                   .replace(">", "&gt;")
+                   .replace("\"", "&quot;")
+                   .replace("'", "&#39;");
+    }
+
+    // ============== EXTENSION LIFECYCLE ==============
+
+    /**
+     * IExtensionStateListener implementation - Called when extension is unloaded
+     */
+    @Override
+    public void extensionUnloaded() {
+        callbacks.printOutput("[" + PLUGIN_NAME + "] Extension unloading - cleaning up...");
+
+        // Stop accepting new tasks
+        scanPaused = true;
+
+        // Shutdown executor service gracefully
+        if (scanningExecutor != null) {
+            try {
+                scanningExecutor.shutdown();
+                if (!scanningExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    scanningExecutor.shutdownNow();
+                    callbacks.printOutput("[" + PLUGIN_NAME + "] Forced shutdown of scanning threads");
+                }
+            } catch (InterruptedException e) {
+                scanningExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        // Clear caches and tracking data
+        confirmedVulnerabilities.clear();
+        parameterTestHistory.clear();
+
+        // Clear static caches in EnhancedAggressive
+        try {
+            EnhancedAggressive.clearStaticCaches();
+        } catch (Exception e) {
+            // Ignore if method doesn't exist
+        }
+
+        callbacks.printOutput("[" + PLUGIN_NAME + "] Extension unloaded successfully");
+    }
+
+    /**
+     * ADVANCED: Perform comprehensive XSS detection with ALL client-side injection attacks
+     * Fully sequenced and ordered for maximum detection power
      */
     private List<IScanIssue> performComprehensiveXSSDetection(IHttpRequestResponse requestResponse) {
         List<IScanIssue> issues = new ArrayList<>();
         
         try {
-            // Basic reflection detection
-            if (checkReflection != null) {
-                List<IScanIssue> reflectionIssues = checkReflection.doPassiveScan(requestResponse);
-                issues.addAll(reflectionIssues);
-            }
+            // CRITICAL: Strict content type filtering - only scan enabled types
+            String contentType = getResponseContentType(requestResponse);
+            ArrayList<String> enabledContentTypes = settings.getEnabledContentTypes();
             
-            // DOM XSS detection
-            if (domXssDetection.isSelected() && domXssDetector != null) {
-                EnhancedDOMXSSDetector.DOMXSSResult domResult = domXssDetector.analyzeDOMXSS(requestResponse);
-            if (domResult.isVulnerable()) {
-                    // Create DOM XSS issue
-                    Map<String, Object> vulnerabilityData = createVulnerabilityData(domResult);
-                    IScanIssue domIssue = issueReporter.createEnhancedXSSIssue(requestResponse, vulnerabilityData);
-                if (domIssue != null) {
-                    issues.add(domIssue);
+            // STRICT: Only scan if content type is explicitly enabled
+            if (contentType != null) {
+                boolean contentTypeEnabled = false;
+                String lowerContentType = contentType.toLowerCase();
+                
+                // If content types are configured, check them strictly
+                if (enabledContentTypes != null && !enabledContentTypes.isEmpty()) {
+                    for (String enabledType : enabledContentTypes) {
+                        if (enabledType != null) {
+                            String lowerEnabledType = enabledType.toLowerCase();
+                            // Match if content type contains enabled type or vice versa
+                            if (lowerContentType.contains(lowerEnabledType) || 
+                                lowerEnabledType.contains(lowerContentType)) {
+                                contentTypeEnabled = true;
+                                break;
+                            }
+                        }
                     }
+                } else {
+                    // No content types configured - default to text/html and application/json only
+                    contentTypeEnabled = lowerContentType.contains("text/html") || 
+                                        lowerContentType.contains("application/json");
+                }
+                
+                // STRICT: Skip if not enabled (no exceptions)
+                if (!contentTypeEnabled) {
+                    if (settings.getVerboseLogging()) {
+                        callbacks.printOutput("[" + PLUGIN_NAME + "] Skipping response - content type not enabled: " + contentType);
+                    }
+                    return issues;
                 }
             }
             
-            // Client-side attack detection
-            if (modernDetection.isSelected() && clientSideDetector != null) {
-                EnhancedClientSideAttackDetector.ClientSideAttackResult clientResult = clientSideDetector.analyzeClientSideAttacks(requestResponse);
-                if (clientResult.isVulnerable()) {
-                    // Create client-side issue
-                    Map<String, Object> vulnerabilityData = createVulnerabilityData(clientResult);
-                    IScanIssue clientIssue = issueReporter.createEnhancedXSSIssue(requestResponse, vulnerabilityData);
-                    if (clientIssue != null) {
-                        issues.add(clientIssue);
+            // STEP 1: Basic reflection detection is now handled in doPassiveScan above
+            // Skip here to avoid duplicate detection
+            // CheckReflection.doPassiveScan is called directly in doPassiveScan method
+            
+            // STEP 2: DOM XSS detection (if enabled - client-side DOM manipulation)
+            // CRITICAL: Skip DOM XSS detection for JavaScript files to prevent false positives
+            if (settings.getDomXssDetection() && domXssDetector != null) {
+                try {
+                    // Check content type - skip DOM XSS for JavaScript files
+                    String responseContentType = getResponseContentType(requestResponse);
+                    if (responseContentType != null) {
+                        String lowerContentType = responseContentType.toLowerCase();
+                        if (lowerContentType.contains("application/javascript") || 
+                            lowerContentType.contains("text/javascript") ||
+                            lowerContentType.contains("application/x-javascript") ||
+                            lowerContentType.contains("application/ecmascript")) {
+                            // Skip DOM XSS detection for JavaScript files - they're not HTML/DOM contexts
+                            callbacks.printOutput("[" + PLUGIN_NAME + "] Skipping DOM XSS detection for JavaScript file: " + responseContentType);
+                        } else {
+                            // Only perform DOM XSS detection for HTML/XML contexts
+                            EnhancedDOMXSSDetector.DOMXSSResult domResult = domXssDetector.analyzeDOMXSS(requestResponse);
+                            if (domResult != null && domResult.isVulnerable()) {
+                                // CRITICAL: Additional validation - require STRONG evidence AND actual payload reflection
+                                // Don't report DOM XSS without actual data flow correlation or high-confidence real-time vectors
+                                boolean hasSourceSinkCorrelation = domResult.getDataFlows() != null && !domResult.getDataFlows().isEmpty();
+                                EnhancedDOMXSSDetector.RealTimeDynamicAnalysis realTimeAnalysis = domResult.getRealTimeAnalysis();
+                                boolean hasHighConfidenceRealTime = realTimeAnalysis != null && realTimeAnalysis.hasRealTimeVectors() &&
+                                    (realTimeAnalysis.isHasWebSocket() || realTimeAnalysis.isHasMutationObserver() || 
+                                     realTimeAnalysis.isHasServiceWorker() || realTimeAnalysis.isHasDynamicImport() ||
+                                     realTimeAnalysis.isHasWebAssembly());
+                                int vulnerabilityScore = domResult.getVulnerabilityScore();
+                                boolean hasHighScore = vulnerabilityScore >= 70; // High score indicates strong correlation
+                                
+                                // CRITICAL FIX: Verify payload is actually reflected in response
+                                // DOM XSS still requires payload reflection (from URL parameters, etc.)
+                                boolean hasPayloadReflection = false;
+                                try {
+                                    byte[] responseBytes = requestResponse.getResponse();
+                                    if (responseBytes != null && responseBytes.length > 0) {
+                                        int bodyOffset = helpers.analyzeResponse(responseBytes).getBodyOffset();
+                                        String responseBody = new String(java.util.Arrays.copyOfRange(responseBytes, bodyOffset, responseBytes.length), java.nio.charset.StandardCharsets.UTF_8);
+                                        
+                                        // Check if any user-controlled data is reflected (from URL, hash, etc.)
+                                        byte[] requestBytes = requestResponse.getRequest();
+                                        if (requestBytes != null) {
+                                            // CRITICAL FIX: Use IHttpRequestResponse to get full URL with HTTP service details
+                                            IRequestInfo reqInfo = helpers.analyzeRequest(requestResponse);
+                                            java.net.URL url = reqInfo.getUrl();
+                                            if (url != null) {
+                                                String query = url.getQuery();
+                                                String hash = url.getRef();
+                                                
+                                                // Check if query parameters are reflected
+                                                if (query != null && !query.isEmpty()) {
+                                                    String[] params = query.split("&");
+                                                    for (String param : params) {
+                                                        if (param.contains("=")) {
+                                                            String[] parts = param.split("=", 2);
+                                                            if (parts.length == 2) {
+                                                                String paramValue = parts[1];
+                                                                // Check if parameter value is reflected in response
+                                                                if (paramValue.length() > 3 && responseBody.contains(paramValue)) {
+                                                                    hasPayloadReflection = true;
+                                                                    break;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                
+                                                // Check if hash is reflected
+                                                if (!hasPayloadReflection && hash != null && !hash.isEmpty() && hash.length() > 3) {
+                                                    if (responseBody.contains(hash)) {
+                                                        hasPayloadReflection = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } catch (Exception e) {
+                                    callbacks.printError("[" + PLUGIN_NAME + "] Error checking payload reflection for DOM XSS: " + e.getMessage());
+                                }
+                                
+                                // Only report if we have STRONG evidence AND payload reflection
+                                if ((hasSourceSinkCorrelation || hasHighConfidenceRealTime || hasHighScore) && hasPayloadReflection) {
+                                    Map<String, Object> vulnerabilityData = createVulnerabilityData(domResult);
+                                    vulnerabilityData.put("SCAN_TYPE", "DOM XSS");
+                                    vulnerabilityData.put("vulnerabilityType", "DOM-Based XSS");
+                                    IScanIssue domIssue = issueReporter.createEnhancedXSSIssue(requestResponse, vulnerabilityData);
+                                    if (domIssue != null) {
+                                        issues.add(domIssue);
+                                    }
+                                } else {
+                                    if (!hasPayloadReflection) {
+                                        callbacks.printOutput("[" + PLUGIN_NAME + "] DOM XSS detected but NO payload reflection in response - FALSE POSITIVE FILTERED");
+                                    } else {
+                                        callbacks.printOutput("[" + PLUGIN_NAME + "] DOM XSS detected but insufficient evidence - requires actual data flows, high-confidence real-time vectors, or vulnerability score >= 70. Current score: " + domResult.getVulnerabilityScore());
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // No content type - perform DOM XSS detection (might be HTML)
+                        EnhancedDOMXSSDetector.DOMXSSResult domResult = domXssDetector.analyzeDOMXSS(requestResponse);
+                        if (domResult != null && domResult.isVulnerable()) {
+                            // Same validation as above - require STRONG evidence AND payload reflection
+                            boolean hasSourceSinkCorrelation = domResult.getDataFlows() != null && !domResult.getDataFlows().isEmpty();
+                            EnhancedDOMXSSDetector.RealTimeDynamicAnalysis realTimeAnalysis = domResult.getRealTimeAnalysis();
+                            boolean hasHighConfidenceRealTime = realTimeAnalysis != null && realTimeAnalysis.hasRealTimeVectors() &&
+                                (realTimeAnalysis.isHasWebSocket() || realTimeAnalysis.isHasMutationObserver() || 
+                                 realTimeAnalysis.isHasServiceWorker() || realTimeAnalysis.isHasDynamicImport() ||
+                                 realTimeAnalysis.isHasWebAssembly());
+                            int vulnerabilityScore = domResult.getVulnerabilityScore();
+                            boolean hasHighScore = vulnerabilityScore >= 70;
+                            
+                            // CRITICAL FIX: Verify payload is actually reflected in response
+                            boolean hasPayloadReflection = false;
+                            try {
+                                byte[] responseBytes = requestResponse.getResponse();
+                                if (responseBytes != null && responseBytes.length > 0) {
+                                    int bodyOffset = helpers.analyzeResponse(responseBytes).getBodyOffset();
+                                    String responseBody = new String(java.util.Arrays.copyOfRange(responseBytes, bodyOffset, responseBytes.length), java.nio.charset.StandardCharsets.UTF_8);
+                                    
+                                    byte[] requestBytes = requestResponse.getRequest();
+                                    if (requestBytes != null) {
+                                        // CRITICAL FIX: Use IHttpRequestResponse to get full URL with HTTP service details
+                                        IRequestInfo reqInfo = helpers.analyzeRequest(requestResponse);
+                                        java.net.URL url = reqInfo.getUrl();
+                                        if (url != null) {
+                                            String query = url.getQuery();
+                                            String hash = url.getRef();
+                                            
+                                            if (query != null && !query.isEmpty()) {
+                                                String[] params = query.split("&");
+                                                for (String param : params) {
+                                                    if (param.contains("=")) {
+                                                        String[] parts = param.split("=", 2);
+                                                        if (parts.length == 2) {
+                                                            String paramValue = parts[1];
+                                                            if (paramValue.length() > 3 && responseBody.contains(paramValue)) {
+                                                                hasPayloadReflection = true;
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            
+                                            if (!hasPayloadReflection && hash != null && !hash.isEmpty() && hash.length() > 3) {
+                                                if (responseBody.contains(hash)) {
+                                                    hasPayloadReflection = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (Exception e) {
+                                callbacks.printError("[" + PLUGIN_NAME + "] Error checking payload reflection for DOM XSS: " + e.getMessage());
+                            }
+                            
+                            if ((hasSourceSinkCorrelation || hasHighConfidenceRealTime || hasHighScore) && hasPayloadReflection) {
+                                Map<String, Object> vulnerabilityData = createVulnerabilityData(domResult);
+                                vulnerabilityData.put("SCAN_TYPE", "DOM XSS");
+                                vulnerabilityData.put("vulnerabilityType", "DOM-Based XSS");
+                                IScanIssue domIssue = issueReporter.createEnhancedXSSIssue(requestResponse, vulnerabilityData);
+                                if (domIssue != null) {
+                                    issues.add(domIssue);
+                                }
+                            } else {
+                                if (!hasPayloadReflection) {
+                                    callbacks.printOutput("[" + PLUGIN_NAME + "] DOM XSS detected but NO payload reflection in response - FALSE POSITIVE FILTERED");
+                                }
+                            }
+                        }
                     }
+                } catch (Exception e) {
+                    callbacks.printError("[" + PLUGIN_NAME + "] Error in DOM XSS detection: " + e.getMessage());
                 }
             }
             
+            // STEP 3: Comprehensive client-side attack detection (if enabled - ALL client-side injection vectors)
+            if (settings.getModernDetection() && clientSideDetector != null) {
+                try {
+                    EnhancedClientSideAttackDetector.ClientSideAttackResult clientResult = clientSideDetector.analyzeClientSideAttacks(requestResponse);
+                    if (clientResult != null && clientResult.isVulnerable()) {
+                        // Create client-side issue
+                        Map<String, Object> vulnerabilityData = createVulnerabilityData(clientResult);
+                        vulnerabilityData.put("SCAN_TYPE", "Client-Side Attack");
+                        vulnerabilityData.put("vulnerabilityType", "Client-Side Injection");
+                        IScanIssue clientIssue = issueReporter.createEnhancedXSSIssue(requestResponse, vulnerabilityData);
+                        if (clientIssue != null) {
+                            issues.add(clientIssue);
+                        }
+                    }
+                } catch (Exception e) {
+                    callbacks.printError("[" + PLUGIN_NAME + "] Error in client-side attack detection: " + e.getMessage());
+                }
+            }
+            
+            // Step 4: Architecture-based detection (if enabled)
+            if (settings.getModernDetection() && architectureDetector != null) {
+                try {
+                    ModernArchitectureDetector.ArchitectureAnalysis archAnalysis = architectureDetector.analyzeArchitecture(requestResponse);
+                    if (archAnalysis != null && "HIGH".equals(archAnalysis.getRiskLevel())) {
+                        // High-risk architecture detected - perform additional checks
+                        callbacks.printOutput("[" + PLUGIN_NAME + "] High-risk architecture detected: " + archAnalysis.getPrimaryArchitecture());
+                    }
+                } catch (Exception e) {
+                    callbacks.printError("[" + PLUGIN_NAME + "] Error in architecture detection: " + e.getMessage());
+                }
+            }
+            
+            // Step 5: JSON-based XSS detection (if enabled)
+            if (settings.getModernDetection() && jsonAnalyzer != null) {
+                try {
+                    AdvancedJSONAnalyzer.JSONAnalysisResult jsonResult = jsonAnalyzer.analyzeJSONResponse(requestResponse);
+                    if (jsonResult != null && jsonResult.getJsonType() == AdvancedJSONAnalyzer.JSONType.JSONP) {
+                        // JSONP detected - potential XSS vector
+                        callbacks.printOutput("[" + PLUGIN_NAME + "] JSONP detected - potential XSS vector");
+                    }
+                } catch (Exception e) {
+                    callbacks.printError("[" + PLUGIN_NAME + "] Error in JSON analysis: " + e.getMessage());
+                }
+            }
+
+            // Step 6: Modern XSS Attack Vector Analysis
+            // Detects DOM Clobbering, mXSS, Prototype Pollution XSS, PostMessage XSS,
+            // Service Worker hijacking, Import Maps manipulation, Trusted Types bypass,
+            // GraphQL XSS, and WebSocket XSS
+            if (settings.getModernDetection() && modernXssAnalyzer != null) {
+                try {
+                    ModernXSSAnalyzer.ModernXSSResult modernResult = modernXssAnalyzer.analyzeForModernXSS(requestResponse);
+                    if (modernResult != null && modernResult.getTotalCount() > 0) {
+                        // Convert each vulnerability to an IScanIssue
+                        for (ModernXSSAnalyzer.VulnerabilityInfo vuln : modernResult.getAllVulnerabilities()) {
+                            IScanIssue modernIssue = createModernXSSIssue(requestResponse, vuln);
+                            if (modernIssue != null) {
+                                issues.add(modernIssue);
+                            }
+                        }
+                        if (settings.getVerboseLogging()) {
+                            callbacks.printOutput("[" + PLUGIN_NAME + "] Modern XSS Analyzer found " +
+                                modernResult.getTotalCount() + " potential issues (Risk: " +
+                                modernResult.overallRiskLevel + ")");
+                        }
+                    }
+                } catch (Exception e) {
+                    callbacks.printError("[" + PLUGIN_NAME + "] Error in Modern XSS analysis: " + e.getMessage());
+                }
+            }
+
         } catch (Exception e) {
             callbacks.printError("[" + PLUGIN_NAME + "] Error in comprehensive XSS detection: " + e.getMessage());
         }
-        
-                return issues;
+
+        return issues;
     }
     
     /**
-     * Perform active XSS detection
+     * Perform active XSS detection with all engines fully integrated
      */
     private List<IScanIssue> performActiveXSSDetection(IHttpRequestResponse requestResponse, IScannerInsertionPoint insertionPoint) {
         List<IScanIssue> issues = new ArrayList<>();
         
         try {
-            // Aggressive detection
-            if (aggressiveMode.isSelected() && aggressiveDetector != null) {
-                List<IScanIssue> aggressiveIssues = aggressiveDetector.doActiveScan(requestResponse, insertionPoint);
-                issues.addAll(aggressiveIssues);
+            // Step 1: Aggressive detection (if enabled)
+            if (settings.getAggressiveMode() && aggressiveDetector != null) {
+                try {
+                    List<IScanIssue> aggressiveIssues = aggressiveDetector.doActiveScan(requestResponse, insertionPoint);
+                    if (aggressiveIssues != null) {
+                        issues.addAll(aggressiveIssues);
+                    }
+                } catch (Exception e) {
+                    callbacks.printError("[" + PLUGIN_NAME + "] Error in aggressive detection: " + e.getMessage());
+                }
             }
             
-            // Engine integration manager
+            // Step 2: Engine integration manager (always enabled for comprehensive testing)
             if (engineIntegrationManager != null) {
-                List<IScanIssue> engineIssues = engineIntegrationManager.performActiveScan(requestResponse, insertionPoint);
-                issues.addAll(engineIssues);
+                try {
+                    List<IScanIssue> engineIssues = engineIntegrationManager.performActiveScan(requestResponse, insertionPoint);
+                    if (engineIssues != null) {
+                        issues.addAll(engineIssues);
+                    }
+                } catch (Exception e) {
+                    callbacks.printError("[" + PLUGIN_NAME + "] Error in engine integration: " + e.getMessage());
+                }
             }
             
+            // Step 3: AI Context Analyzer (if enabled)
+            if (settings.getCheckContext() && aiAnalyzer != null) {
+                try {
+                    // Perform AI analysis using insertion point context
+                    // Parameters: requestResponse, parameter name, payload (base value), matches
+                    String baseValue = insertionPoint.getBaseValue();
+                    AIContextAnalyzer.AIAnalysisResult aiResult = aiAnalyzer.analyzeWithAI(
+                        requestResponse,
+                        insertionPoint.getInsertionPointName(),
+                        baseValue != null ? baseValue : "",
+                        null  // No specific matches at this point
+                    );
+                    if (aiResult != null && aiResult.getConfidence() > 70.0) {
+                        // High confidence AI analysis - log insights
+                        if (settings.getVerboseLogging()) {
+                            callbacks.printOutput("[" + PLUGIN_NAME + "] AI Analysis: " +
+                                "Confidence=" + aiResult.getConfidence() + "%" +
+                                ", Type=" + aiResult.getVulnerabilityType() +
+                                ", Difficulty=" + aiResult.getExploitationDifficulty());
+                        }
+                    }
+                } catch (Exception e) {
+                    callbacks.printError("[" + PLUGIN_NAME + "] Error in AI context analysis: " + e.getMessage());
+                }
+            }
+
+            // Step 4: Advanced filtering to ensure true positives only
+            if (filteringEngine != null && !issues.isEmpty()) {
+                try {
+                    List<IScanIssue> filteredIssues = new ArrayList<>();
+                    for (IScanIssue issue : issues) {
+                        // Create reflection data map for filtering
+                        Map<String, Object> reflectionData = new HashMap<>();
+                        reflectionData.put("issueName", issue.getIssueName());
+                        reflectionData.put("severity", issue.getSeverity());
+                        reflectionData.put("confidence", issue.getConfidence());
+                        reflectionData.put("url", issue.getUrl() != null ? issue.getUrl().toString() : "");
+
+                        FilterResult filterResult =
+                            filteringEngine.analyzeReflection(reflectionData, requestResponse);
+
+                        if (filterResult != null && !filterResult.isFiltered()) {
+                            // Issue passes filtering - keep it
+                            filteredIssues.add(issue);
+                        } else if (filterResult != null && settings.getVerboseLogging()) {
+                            callbacks.printOutput("[" + PLUGIN_NAME + "] Issue filtered: " +
+                                filterResult.getReason() + " (confidence: " + filterResult.getConfidenceScore() + ")");
+                        }
+                    }
+                    // Replace issues with filtered list
+                    issues.clear();
+                    issues.addAll(filteredIssues);
+                    if (settings.getVerboseLogging()) {
+                        callbacks.printOutput("[" + PLUGIN_NAME + "] Filtering complete: " +
+                            filteredIssues.size() + " issues remain after filtering");
+                    }
+                } catch (Exception e) {
+                    callbacks.printError("[" + PLUGIN_NAME + "] Error in advanced filtering: " + e.getMessage());
+                }
+            }
+
         } catch (Exception e) {
             callbacks.printError("[" + PLUGIN_NAME + "] Error in active XSS detection: " + e.getMessage());
         }
-        
+
         return issues;
     }
     
     /**
-     * Create vulnerability data from detection results
+     * Create comprehensive vulnerability data from detection results
      */
     private Map<String, Object> createVulnerabilityData(Object result) {
         Map<String, Object> data = new HashMap<>();
         
-        if (result instanceof EnhancedDOMXSSDetector.DOMXSSResult) {
-            EnhancedDOMXSSDetector.DOMXSSResult domResult = (EnhancedDOMXSSDetector.DOMXSSResult) result;
-            data.put("vulnerabilityType", "DOM XSS");
-            data.put("confidence", domResult.getConfidenceLevel());
-            data.put("riskLevel", domResult.getRiskLevel());
-            data.put("testPayload", domResult.getTestPayload());
-            data.put("testRequest", domResult.getTestRequest());
-            data.put("testResponse", domResult.getTestResponse());
-        } else if (result instanceof EnhancedClientSideAttackDetector.ClientSideAttackResult) {
-            EnhancedClientSideAttackDetector.ClientSideAttackResult clientResult = (EnhancedClientSideAttackDetector.ClientSideAttackResult) result;
-            data.put("vulnerabilityType", "Client-Side XSS");
-            data.put("confidence", clientResult.getConfidenceLevel());
-            data.put("riskLevel", clientResult.getRiskLevel());
-            data.put("testPayload", clientResult.getTestPayload());
-            data.put("testRequest", clientResult.getTestRequest());
-            data.put("testResponse", clientResult.getTestResponse());
+        try {
+            if (result instanceof EnhancedDOMXSSDetector.DOMXSSResult) {
+                EnhancedDOMXSSDetector.DOMXSSResult domResult = (EnhancedDOMXSSDetector.DOMXSSResult) result;
+                data.put("vulnerabilityType", "DOM XSS");
+                data.put("confidence", domResult.getConfidenceLevel());
+                data.put("riskLevel", domResult.getRiskLevel());
+                // CRITICAL FIX: Use uppercase keys to match isVulnerabilityTrulyExploitable validation
+                String testPayload = domResult.getTestPayload();
+                String testRequestStr = domResult.getTestRequest();
+                String testResponseStr = domResult.getTestResponse();
+                byte[] testRequest = testRequestStr != null ? testRequestStr.getBytes(StandardCharsets.UTF_8) : null;
+                byte[] testResponse = testResponseStr != null ? testResponseStr.getBytes(StandardCharsets.UTF_8) : null;
+                
+                data.put("payload", testPayload != null ? testPayload : "");
+                if (testRequest != null) {
+                    data.put("TEST_REQUEST", testRequest);
+                }
+                if (testResponse != null) {
+                    data.put("TEST_RESPONSE", testResponse);
+                }
+                // Also keep lowercase for backward compatibility
+                data.put("testPayload", testPayload);
+                data.put("testRequest", testRequest);
+                data.put("testResponse", testResponse);
+                
+                // CRITICAL: For DOM XSS, confirmation is based on source-sink analysis, not payload injection
+                // If we have valid source-sink flow with high confidence, mark as confirmed
+                boolean hasSourceSink = domResult.getSourceSinkAnalysis() != null && 
+                                       !domResult.getSourceSinkAnalysis().trim().isEmpty();
+                boolean hasDataFlows = domResult.getDataFlows() != null && !domResult.getDataFlows().isEmpty();
+                boolean hasSources = domResult.getDetectedSources() != null && !domResult.getDetectedSources().isEmpty();
+                boolean hasSinks = domResult.getDetectedSinks() != null && !domResult.getDetectedSinks().isEmpty();
+                boolean highConfidence = "Certain".equals(domResult.getConfidenceLevel()) || "Firm".equals(domResult.getConfidenceLevel());
+                
+                // Confirm if we have source-sink evidence AND high confidence
+                boolean isConfirmed = (hasSourceSink || hasDataFlows || (hasSources && hasSinks)) && highConfidence;
+                data.put("CONFIRMED_XSS", isConfirmed);
+                // CRITICAL: Confidence score based on actual evidence, not simulated
+                // Calculate from vulnerability score and confidence level
+                int vulnScore = domResult.getVulnerabilityScore();
+                String confLevel = domResult.getConfidenceLevel();
+                double confidenceScore = 0.0;
+                if ("Certain".equals(confLevel) && vulnScore >= 80) {
+                    confidenceScore = 95.0;
+                } else if ("Firm".equals(confLevel) && vulnScore >= 60) {
+                    confidenceScore = 80.0;
+                } else if (vulnScore >= 70) {
+                    confidenceScore = 70.0; // High vulnerability score = firm confidence
+                } else if (vulnScore >= 50) {
+                    confidenceScore = 60.0; // Medium vulnerability score = tentative confidence
+                } else {
+                    confidenceScore = 0.0; // Low score = no confidence
+                }
+                data.put("CONFIDENCE_SCORE", confidenceScore);
+                data.put("XSS_SCORE", domResult.getVulnerabilityScore());
+                data.put("ENHANCED_CONTEXT", "DOM-based XSS - Client-side vulnerability");
+                data.put("SCAN_TYPE", "DOM"); // Mark as DOM scan type for proper validation
+
+                // Dynamic reproduction material (used by Burp-safe reporting)
+                if (domResult.getExploitPOC() != null && !domResult.getExploitPOC().trim().isEmpty()) {
+                    data.put("EXPLOIT_POC", domResult.getExploitPOC());
+                }
+                if (domResult.getReproductionSteps() != null && !domResult.getReproductionSteps().trim().isEmpty()) {
+                    data.put("REPRODUCTION_STEPS", domResult.getReproductionSteps());
+                }
+                if (domResult.getSourceSinkAnalysis() != null && !domResult.getSourceSinkAnalysis().trim().isEmpty()) {
+                    data.put("SOURCE_SINK_ANALYSIS", domResult.getSourceSinkAnalysis());
+                }
+                if (domResult.getBrowserExploitCode() != null && !domResult.getBrowserExploitCode().trim().isEmpty()) {
+                    data.put("BROWSER_EXPLOIT_CODE", domResult.getBrowserExploitCode());
+                }
+
+                // Make paramName meaningful for client-side findings (required for reporting)
+                String domParamName = "DOM XSS";
+                try {
+                    if (domResult.getDataFlows() != null && !domResult.getDataFlows().isEmpty()) {
+                        EnhancedDOMXSSDetector.DataFlow flow = domResult.getDataFlows().get(0);
+                        if (flow != null && flow.getSource() != null && flow.getSink() != null) {
+                            String s = flow.getSource().getName();
+                            String k = flow.getSink().getName();
+                            if (s != null && k != null) domParamName = "DOM XSS: " + s + " -> " + k;
+                        }
+                    } else if (domResult.getDetectedSinks() != null && !domResult.getDetectedSinks().isEmpty()) {
+                        String k = domResult.getDetectedSinks().get(0).getName();
+                        if (k != null && !k.trim().isEmpty()) domParamName = "DOM XSS sink: " + k;
+                    } else if (domResult.getDetectedSources() != null && !domResult.getDetectedSources().isEmpty()) {
+                        String s = domResult.getDetectedSources().get(0).getName();
+                        if (s != null && !s.trim().isEmpty()) domParamName = "DOM XSS source: " + s;
+                    }
+                } catch (Exception ignored) {}
+                data.put("paramName", domParamName);
+
+                // Terms to highlight in response when payload is not present in the request/response
+                List<String> highlightTerms = new ArrayList<>();
+                try {
+                    if (domResult.getDetectedSinks() != null) {
+                        for (EnhancedDOMXSSDetector.DOMSink s : domResult.getDetectedSinks()) {
+                            if (s != null && s.getName() != null && !s.getName().trim().isEmpty()) {
+                                highlightTerms.add(s.getName());
+                                if (highlightTerms.size() >= 5) break;
+                            }
+                        }
+                    }
+                    if (domResult.getDetectedSources() != null && highlightTerms.size() < 5) {
+                        for (EnhancedDOMXSSDetector.DOMSource s : domResult.getDetectedSources()) {
+                            if (s != null && s.getName() != null && !s.getName().trim().isEmpty()) {
+                                highlightTerms.add(s.getName());
+                                if (highlightTerms.size() >= 5) break;
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
+                if (!highlightTerms.isEmpty()) {
+                    data.put("HIGHLIGHT_TERMS", highlightTerms);
+                }
+                
+                // Add DOM-specific data
+                if (domResult.getDetectedSources() != null && !domResult.getDetectedSources().isEmpty()) {
+                    data.put("DOM_SOURCES", domResult.getDetectedSources().size());
+                }
+                if (domResult.getDetectedSinks() != null && !domResult.getDetectedSinks().isEmpty()) {
+                    data.put("DOM_SINKS", domResult.getDetectedSinks().size());
+                }
+                if (domResult.getDataFlows() != null && !domResult.getDataFlows().isEmpty()) {
+                    data.put("DATA_FLOWS", domResult.getDataFlows().size());
+                }
+                
+            } else if (result instanceof EnhancedClientSideAttackDetector.ClientSideAttackResult) {
+                EnhancedClientSideAttackDetector.ClientSideAttackResult clientResult = (EnhancedClientSideAttackDetector.ClientSideAttackResult) result;
+                data.put("vulnerabilityType", "Client-Side XSS");
+                data.put("confidence", clientResult.getConfidenceLevel());
+                data.put("riskLevel", clientResult.getRiskLevel());
+                // CRITICAL FIX: Use uppercase keys to match isVulnerabilityTrulyExploitable validation
+                String testPayload = clientResult.getTestPayload();
+                String testRequestStr = clientResult.getTestRequest();
+                String testResponseStr = clientResult.getTestResponse();
+                byte[] testRequest = testRequestStr != null ? testRequestStr.getBytes(StandardCharsets.UTF_8) : null;
+                byte[] testResponse = testResponseStr != null ? testResponseStr.getBytes(StandardCharsets.UTF_8) : null;
+                
+                data.put("payload", testPayload != null ? testPayload : "");
+                if (testRequest != null) {
+                    data.put("TEST_REQUEST", testRequest);
+                }
+                if (testResponse != null) {
+                    data.put("TEST_RESPONSE", testResponse);
+                }
+                // Also keep lowercase for backward compatibility
+                data.put("testPayload", testPayload);
+                data.put("testRequest", testRequest);
+                data.put("testResponse", testResponse);
+                
+                // CRITICAL: For client-side attacks, confirmation is based on source-sink correlation, not payload injection
+                // Check for source-sink correlation evidence (TAINT_FLOW patterns in ModernAPIAnalysis)
+                boolean hasSourceSinkCorrelation = false;
+                String sourceSinkAnalysis = "";
+                try {
+                    if (clientResult.getModernAPIAnalysis() != null && clientResult.getModernAPIAnalysis().getDetectedPatterns() != null) {
+                        List<String> patterns = clientResult.getModernAPIAnalysis().getDetectedPatterns();
+                        for (String pattern : patterns) {
+                            if (pattern != null && pattern.startsWith("TAINT_FLOW:")) {
+                                hasSourceSinkCorrelation = true;
+                                if (sourceSinkAnalysis.isEmpty()) {
+                                    sourceSinkAnalysis = "Source-Sink Correlation Detected:\n";
+                                }
+                                sourceSinkAnalysis += "- " + pattern + "\n";
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
+                
+                // Also check if vulnerable flag is set (which requires correlationScore >= 30 or high-risk vectors)
+                boolean isVulnerable = clientResult.isVulnerable();
+                boolean hasHighRiskScore = clientResult.getRiskScore() >= 70;
+                String confidenceLevel = clientResult.getConfidenceLevel();
+                boolean highConfidence = "High".equals(confidenceLevel) || "Certain".equals(confidenceLevel) || "Firm".equals(confidenceLevel);
+                
+                // CRITICAL FIX: Don't mark as CONFIRMED based solely on pattern matching
+                // Pattern matching (proximity of sources/sinks) is NOT proof of actual data flow
+                // Require STRONG evidence: either actual payload injection OR very high correlation score with multiple taint flows
+                // Just having sources and sinks nearby doesn't mean they're connected
+                // CRITICAL: CSP misconfiguration alone is NEVER exploitable XSS
+                
+                // CRITICAL: Check if this is ONLY CSP misconfiguration (not exploitable XSS)
+                boolean isOnlyCSPMisconfig = clientResult.getCspAnalysis() != null && 
+                                            clientResult.getCspAnalysis().getRiskScore() > 0 &&
+                                            clientResult.getPostMessageAnalysis().getRiskScore() < 25 &&
+                                            clientResult.getWebSocketAnalysis().getRiskScore() < 25 &&
+                                            clientResult.getTemplateInjectionAnalysis().getRiskScore() < 25 &&
+                                            clientResult.getPrototypePollutionAnalysis().getRiskScore() < 25;
+                
+                boolean isConfirmed = false;
+                try {
+                    // CRITICAL: Never confirm CSP misconfiguration alone
+                    if (isOnlyCSPMisconfig) {
+                        data.put("CONFIRMED_XSS", false);
+                        isConfirmed = false;
+                        callbacks.printOutput("[XSSDetector] CSP misconfiguration detected - NOT marking as CONFIRMED_XSS (informational only)");
+                    } else {
+                        // Count actual taint flows (not just pattern matches)
+                        if (clientResult.getModernAPIAnalysis() != null && clientResult.getModernAPIAnalysis().getDetectedPatterns() != null) {
+                            // CRITICAL FIX: Count UNIQUE taint flows (deduplicate)
+                            Set<String> uniqueTaintFlows = new HashSet<>();
+                            for (String pattern : clientResult.getModernAPIAnalysis().getDetectedPatterns()) {
+                                if (pattern != null && pattern.startsWith("TAINT_FLOW:")) {
+                                    uniqueTaintFlows.add(pattern); // Set automatically deduplicates
+                                }
+                            }
+                            int taintFlowCount = uniqueTaintFlows.size();
+                            
+                            // Require multiple taint flows OR very high risk score to reduce false positives
+                            // Single taint flow in proximity is not enough proof
+                            boolean hasMultipleTaintFlows = taintFlowCount >= 3;
+                            boolean hasVeryHighRisk = clientResult.getRiskScore() >= 85;
+                            
+                            // CRITICAL: Also require that the issue is actually vulnerable (not just CSP misconfig)
+                            // AND the vulnerable flag is set (which means correlationScore >= 30 or high-risk vectors)
+                            isConfirmed = !isOnlyCSPMisconfig && 
+                                        hasSourceSinkCorrelation && 
+                                        (hasMultipleTaintFlows || hasVeryHighRisk) && 
+                                        isVulnerable && 
+                                        (highConfidence || hasHighRiskScore);
+                            data.put("CONFIRMED_XSS", isConfirmed);
+                            
+                            if (!isConfirmed && hasSourceSinkCorrelation) {
+                                callbacks.printOutput("[XSSDetector] Client-side pattern detected but NOT confirmed - insufficient evidence (unique taint flows: " + taintFlowCount + ", risk: " + clientResult.getRiskScore() + ", vulnerable: " + isVulnerable + ")");
+                            }
+                        } else {
+                            // No taint flows detected - definitely not confirmed
+                            data.put("CONFIRMED_XSS", false);
+                        }
+                    }
+                } catch (Exception e) {
+                    // On error, don't confirm
+                    data.put("CONFIRMED_XSS", false);
+                    isConfirmed = false;
+                }
+                
+                // CRITICAL: Calculate confidence score based on REAL evidence, not simulated
+                // Base confidence from actual risk score
+                int riskScore = clientResult.getRiskScore();
+                double confidenceScore = 0.0;
+                
+                // Only set confidence if we have actual evidence
+                if (riskScore >= 70) {
+                    confidenceScore = 90.0; // High risk = high confidence
+                } else if (riskScore >= 50) {
+                    confidenceScore = 70.0; // Medium risk = medium confidence
+                } else if (riskScore >= 30) {
+                    confidenceScore = 50.0; // Low risk = low confidence
+                } else {
+                    confidenceScore = 0.0; // Very low risk = no confidence
+                }
+                
+                // Boost for source-sink correlation (real evidence)
+                if (hasSourceSinkCorrelation && riskScore >= 50) {
+                    confidenceScore = Math.min(100.0, confidenceScore + 10.0);
+                }
+                
+                // Boost for confirmed XSS (requires actual test request/response)
+                if (isConfirmed && riskScore >= 70) {
+                    confidenceScore = Math.min(100.0, confidenceScore + 5.0);
+                }
+                
+                data.put("CONFIDENCE_SCORE", confidenceScore);
+                data.put("XSS_SCORE", (double) clientResult.getRiskScore());
+                data.put("ENHANCED_CONTEXT", "Client-side injection attack - Multiple vectors detected");
+                data.put("SCAN_TYPE", "Client-Side Attack"); // Mark as Client-Side scan type for proper validation
+
+                // Dynamic reproduction material (used by Burp-safe reporting)
+                if (clientResult.getExploitPOC() != null && !clientResult.getExploitPOC().trim().isEmpty()) {
+                    data.put("EXPLOIT_POC", clientResult.getExploitPOC());
+                }
+                if (clientResult.getReproductionSteps() != null && !clientResult.getReproductionSteps().trim().isEmpty()) {
+                    data.put("REPRODUCTION_STEPS", clientResult.getReproductionSteps());
+                }
+                
+                // CRITICAL: Store source-sink analysis for reporting
+                if (!sourceSinkAnalysis.isEmpty()) {
+                    data.put("SOURCE_SINK_ANALYSIS", sourceSinkAnalysis);
+                } else {
+                    // Fallback: Generate source-sink analysis from detected patterns
+                    try {
+                        if (clientResult.getModernAPIAnalysis() != null && clientResult.getModernAPIAnalysis().getDetectedPatterns() != null) {
+                            List<String> analysisLines = new ArrayList<>();
+                            analysisLines.add("Client-side risk score: " + clientResult.getRiskScore());
+                            analysisLines.add("Vulnerable: " + isVulnerable);
+                            if (hasSourceSinkCorrelation) {
+                                analysisLines.add("Source-sink correlation: DETECTED");
+                            }
+                            List<String> patterns = clientResult.getModernAPIAnalysis().getDetectedPatterns();
+                            for (String pattern : patterns) {
+                                if (pattern != null && !pattern.trim().isEmpty()) {
+                                    analysisLines.add("Pattern: " + pattern);
+                                }
+                            }
+                            if (!analysisLines.isEmpty()) {
+                                data.put("SOURCE_SINK_ANALYSIS", String.join("\n", analysisLines));
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+
+                // Make paramName meaningful for client-side findings (required for reporting)
+                String clientParamName = "Client-side issue";
+                try {
+                    if (clientResult.getCspAnalysis() != null && clientResult.getCspAnalysis().getRiskScore() > 0) {
+                        // isOnlyCSPMisconfig already calculated above
+                        if (isOnlyCSPMisconfig) {
+                            // CSP misconfiguration alone - mark as informational, not exploitable
+                            clientParamName = "CSP misconfiguration (informational)";
+                            // CRITICAL: Never mark CSP misconfiguration as CONFIRMED_XSS
+                            data.put("CONFIRMED_XSS", false);
+                            data.put("CONFIDENCE_SCORE", 30.0); // Low confidence - informational only
+                            callbacks.printOutput("[XSSDetector] CSP misconfiguration detected - marking as informational (not exploitable XSS)");
+                        } else {
+                            clientParamName = "CSP misconfiguration + client-side vectors";
+                        }
+                    } else if (clientResult.getPostMessageAnalysis() != null && clientResult.getPostMessageAnalysis().getRiskScore() > 0) {
+                        clientParamName = "postMessage handler";
+                    } else if (clientResult.getWebSocketAnalysis() != null && clientResult.getWebSocketAnalysis().getRiskScore() > 0) {
+                        clientParamName = "WebSocket usage";
+                    } else if (clientResult.getTemplateInjectionAnalysis() != null && clientResult.getTemplateInjectionAnalysis().getRiskScore() > 0) {
+                        clientParamName = "Client-side template injection";
+                    } else if (clientResult.getPrototypePollutionAnalysis() != null && clientResult.getPrototypePollutionAnalysis().getRiskScore() > 0) {
+                        clientParamName = "Prototype pollution";
+                    } else if (clientResult.getModernAPIAnalysis() != null && clientResult.getModernAPIAnalysis().getRiskScore() > 0) {
+                        clientParamName = "Modern browser APIs";
+                    } else if (clientResult.getWebComponentsAnalysis() != null && clientResult.getWebComponentsAnalysis().getRiskScore() > 0) {
+                        clientParamName = "Web Components";
+                    }
+                } catch (Exception ignored) {}
+                data.put("paramName", clientParamName);
+
+                // Terms to highlight in response when payload is not present in the request/response
+                List<String> highlightTerms = new ArrayList<>();
+                try {
+                    if (clientResult.getCspAnalysis() != null && clientResult.getCspAnalysis().getRiskScore() > 0) {
+                        highlightTerms.add("Content-Security-Policy");
+                        highlightTerms.add("content-security-policy");
+                        highlightTerms.add("unsafe-inline");
+                        highlightTerms.add("unsafe-eval");
+                    }
+                    if (clientResult.getPostMessageAnalysis() != null && clientResult.getPostMessageAnalysis().getRiskScore() > 0) {
+                        highlightTerms.add("postMessage");
+                        highlightTerms.add("addEventListener('message'");
+                        highlightTerms.add("addEventListener(\"message\"");
+                        highlightTerms.add("onmessage");
+                        highlightTerms.add("event.data");
+                        highlightTerms.add("message.data");
+                    }
+                    if (clientResult.getWebSocketAnalysis() != null && clientResult.getWebSocketAnalysis().getRiskScore() > 0) {
+                        highlightTerms.add("WebSocket");
+                        highlightTerms.add("ws://");
+                        highlightTerms.add("wss://");
+                        highlightTerms.add("onmessage");
+                        highlightTerms.add("e.data");
+                    }
+                    if (clientResult.getTemplateInjectionAnalysis() != null && clientResult.getTemplateInjectionAnalysis().getRiskScore() > 0) {
+                        highlightTerms.add("{{");
+                        highlightTerms.add("${");
+                        highlightTerms.add("<%=");
+                    }
+                    if (clientResult.getPrototypePollutionAnalysis() != null && clientResult.getPrototypePollutionAnalysis().getRiskScore() > 0) {
+                        highlightTerms.add("__proto__");
+                        highlightTerms.add("prototype");
+                        highlightTerms.add("constructor");
+                    }
+                    // Generic high-impact sinks to highlight for correlated client-side issues
+                    highlightTerms.add("innerHTML");
+                    highlightTerms.add("outerHTML");
+                    highlightTerms.add("insertAdjacentHTML");
+                    highlightTerms.add("document.write");
+                    highlightTerms.add("eval(");
+                    highlightTerms.add("Function(");
+                } catch (Exception ignored) {}
+                if (!highlightTerms.isEmpty()) {
+                    data.put("HIGHLIGHT_TERMS", highlightTerms);
+                }
+
+                // Human-readable client-side evidence for reporting (researcher-friendly)
+                try {
+                    List<String> lines = new ArrayList<>();
+                    lines.add("Client-side risk score: " + clientResult.getRiskScore());
+
+                    if (clientResult.getCspAnalysis() != null && clientResult.getCspAnalysis().getRiskScore() > 0) {
+                        lines.add("CSP risk score: " + clientResult.getCspAnalysis().getRiskScore());
+                        if (clientResult.getCspAnalysis().getUnsafeDirectives() != null && !clientResult.getCspAnalysis().getUnsafeDirectives().isEmpty()) {
+                            lines.add("CSP unsafe directives: " + String.join(", ", clientResult.getCspAnalysis().getUnsafeDirectives()));
+                        }
+                        if (clientResult.getCspAnalysis().getMissingDirectives() != null && !clientResult.getCspAnalysis().getMissingDirectives().isEmpty()) {
+                            lines.add("CSP missing directives: " + String.join(", ", clientResult.getCspAnalysis().getMissingDirectives()));
+                        }
+                    }
+
+                    if (clientResult.getPostMessageAnalysis() != null && clientResult.getPostMessageAnalysis().getRiskScore() > 0) {
+                        lines.add("PostMessage risk score: " + clientResult.getPostMessageAnalysis().getRiskScore());
+                        if (clientResult.getPostMessageAnalysis().getDetectedPatterns() != null) {
+                            for (String p : clientResult.getPostMessageAnalysis().getDetectedPatterns()) {
+                                if (p != null && !p.trim().isEmpty()) lines.add("POSTMESSAGE: " + p);
+                            }
+                        }
+                    }
+                    if (clientResult.getWebSocketAnalysis() != null && clientResult.getWebSocketAnalysis().getRiskScore() > 0) {
+                        lines.add("WebSocket risk score: " + clientResult.getWebSocketAnalysis().getRiskScore());
+                        if (clientResult.getWebSocketAnalysis().getDetectedPatterns() != null) {
+                            for (String p : clientResult.getWebSocketAnalysis().getDetectedPatterns()) {
+                                if (p != null && !p.trim().isEmpty()) lines.add("WEBSOCKET: " + p);
+                            }
+                        }
+                    }
+                    if (clientResult.getTemplateInjectionAnalysis() != null && clientResult.getTemplateInjectionAnalysis().getRiskScore() > 0) {
+                        lines.add("Template injection risk score: " + clientResult.getTemplateInjectionAnalysis().getRiskScore());
+                        if (clientResult.getTemplateInjectionAnalysis().getDetectedPatterns() != null) {
+                            for (String p : clientResult.getTemplateInjectionAnalysis().getDetectedPatterns()) {
+                                if (p != null && !p.trim().isEmpty()) lines.add("TEMPLATE: " + p);
+                            }
+                        }
+                    }
+                    if (clientResult.getPrototypePollutionAnalysis() != null && clientResult.getPrototypePollutionAnalysis().getRiskScore() > 0) {
+                        lines.add("Prototype pollution risk score: " + clientResult.getPrototypePollutionAnalysis().getRiskScore());
+                        if (clientResult.getPrototypePollutionAnalysis().getDetectedPatterns() != null) {
+                            for (String p : clientResult.getPrototypePollutionAnalysis().getDetectedPatterns()) {
+                                if (p != null && !p.trim().isEmpty()) lines.add("PROTOTYPE: " + p);
+                            }
+                        }
+                    }
+                    if (clientResult.getModernAPIAnalysis() != null && clientResult.getModernAPIAnalysis().getRiskScore() > 0) {
+                        lines.add("Modern API risk score: " + clientResult.getModernAPIAnalysis().getRiskScore());
+                        if (clientResult.getModernAPIAnalysis().getDetectedPatterns() != null) {
+                            for (String p : clientResult.getModernAPIAnalysis().getDetectedPatterns()) {
+                                if (p != null && !p.trim().isEmpty()) lines.add("MODERN_API: " + p);
+                            }
+                        }
+                    }
+                    if (clientResult.getWebComponentsAnalysis() != null && clientResult.getWebComponentsAnalysis().getRiskScore() > 0) {
+                        lines.add("Web Components risk score: " + clientResult.getWebComponentsAnalysis().getRiskScore());
+                        if (clientResult.getWebComponentsAnalysis().getDetectedPatterns() != null) {
+                            for (String p : clientResult.getWebComponentsAnalysis().getDetectedPatterns()) {
+                                if (p != null && !p.trim().isEmpty()) lines.add("WEB_COMPONENTS: " + p);
+                            }
+                        }
+                    }
+
+                    // Cap output size to keep advisories readable
+                    if (lines.size() > 80) {
+                        lines = new ArrayList<>(lines.subList(0, 80));
+                        lines.add("... (truncated)");
+                    }
+
+                    if (!lines.isEmpty()) {
+                        data.put("SOURCE_SINK_ANALYSIS", String.join("\n", lines));
+                    }
+                } catch (Exception ignored) {}
+                
+                // Add client-side specific data
+                if (clientResult.getCspAnalysis() != null && clientResult.getCspAnalysis().getRiskScore() > 0) {
+                    data.put("CSP_BYPASS", true);
+                }
+                if (clientResult.getPostMessageAnalysis() != null && clientResult.getPostMessageAnalysis().getRiskScore() > 0) {
+                    data.put("POSTMESSAGE_VULN", true);
+                }
+                if (clientResult.getWebSocketAnalysis() != null && clientResult.getWebSocketAnalysis().getRiskScore() > 0) {
+                    data.put("WEBSOCKET_VULN", true);
+                }
+            }
+            
+            // Ensure paramName is set (fallback)
+            if (!data.containsKey("paramName") || data.get("paramName") == null || String.valueOf(data.get("paramName")).trim().isEmpty()) {
+                data.put("paramName", "detected_parameter");
+            }
+            
+        } catch (Exception e) {
+            callbacks.printError("[" + PLUGIN_NAME + "] Error creating vulnerability data: " + e.getMessage());
+            // Return minimal data structure
+            data.put("vulnerabilityType", "XSS");
+            data.put("CONFIRMED_XSS", false);
+            data.put("CONFIDENCE_SCORE", 50.0);
         }
         
         return data;
