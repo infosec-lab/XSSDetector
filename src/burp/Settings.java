@@ -38,6 +38,15 @@ class Settings {
     private String enableCSPBypass;
     private String enablePolyglotPayloads;
     private String enableBrowserSpecific;
+
+    // Advanced payload packs (previously incorrectly mapped to other flags)
+    private String enableJSFucker;
+    private String enablePrototypePollution;
+    private String enablePostMessageXSS;
+    private String enableWebComponents;
+    private String enableShadowDOM;
+    private String enableWebAssembly;
+    private String enableModernBrowserAPI;
     
     // Analysis and reporting
     private String detailedReporting;
@@ -109,6 +118,15 @@ class Settings {
         enableCSPBypass = TRUE_CONST;
         enablePolyglotPayloads = TRUE_CONST;
         enableBrowserSpecific = TRUE_CONST;
+
+        // Advanced payload packs (default ON to maximize coverage; can be disabled in UI)
+        enableJSFucker = FALSE_CONST; // very noisy payload family, keep off by default
+        enablePrototypePollution = TRUE_CONST;
+        enablePostMessageXSS = TRUE_CONST;
+        enableWebComponents = TRUE_CONST;
+        enableShadowDOM = TRUE_CONST;
+        enableWebAssembly = TRUE_CONST;
+        enableModernBrowserAPI = TRUE_CONST;
         
         // Analysis and reporting
         detailedReporting = TRUE_CONST;
@@ -190,6 +208,28 @@ class Settings {
             
             enableBrowserSpecific = callbacks.loadExtensionSetting("enableBrowserSpecific");
             if (enableBrowserSpecific == null) enableBrowserSpecific = TRUE_CONST;
+
+            // Advanced payload packs (backwards compatible defaults)
+            enableJSFucker = callbacks.loadExtensionSetting("enableJSFucker");
+            if (enableJSFucker == null) enableJSFucker = FALSE_CONST;
+
+            enablePrototypePollution = callbacks.loadExtensionSetting("enablePrototypePollution");
+            if (enablePrototypePollution == null) enablePrototypePollution = enableFrameworkSpecific; // legacy behavior
+
+            enablePostMessageXSS = callbacks.loadExtensionSetting("enablePostMessageXSS");
+            if (enablePostMessageXSS == null) enablePostMessageXSS = enableFrameworkSpecific; // legacy behavior
+
+            enableWebComponents = callbacks.loadExtensionSetting("enableWebComponents");
+            if (enableWebComponents == null) enableWebComponents = enableFrameworkSpecific; // legacy behavior
+
+            enableShadowDOM = callbacks.loadExtensionSetting("enableShadowDOM");
+            if (enableShadowDOM == null) enableShadowDOM = enableFrameworkSpecific; // legacy behavior
+
+            enableWebAssembly = callbacks.loadExtensionSetting("enableWebAssembly");
+            if (enableWebAssembly == null) enableWebAssembly = enableFrameworkSpecific; // legacy behavior
+
+            enableModernBrowserAPI = callbacks.loadExtensionSetting("enableModernBrowserAPI");
+            if (enableModernBrowserAPI == null) enableModernBrowserAPI = enableFrameworkSpecific; // legacy behavior
             
             // Load analysis settings
             detailedReporting = callbacks.loadExtensionSetting("detailedReporting");
@@ -253,18 +293,24 @@ class Settings {
                 enabledContentTypes = extractEnabledContentTypes();
             } else {
                 // Initialize with default content types
+                // Only text/html and application/json enabled by default
                 contentTypes = new ArrayList<>();
                 for (String contentType : MODERN_DEFAULT_CONTENT_TYPES) {
-                    contentTypes.add(new Object[]{contentType, true});
+                    // Only enable text/html and application/json by default
+                    boolean enabled = "text/html".equals(contentType) || "application/json".equals(contentType);
+                    contentTypes.add(new Object[]{contentType, enabled});
                 }
                 enabledContentTypes = extractEnabledContentTypes();
             }
         } catch (Exception e) {
             callbacks.printError("Error loading content types: " + e.getMessage());
             // Fallback to defaults
+            // Only text/html and application/json enabled by default
             contentTypes = new ArrayList<>();
             for (String contentType : MODERN_DEFAULT_CONTENT_TYPES) {
-                contentTypes.add(new Object[]{contentType, true});
+                // Only enable text/html and application/json by default
+                boolean enabled = "text/html".equals(contentType) || "application/json".equals(contentType);
+                contentTypes.add(new Object[]{contentType, enabled});
             }
             enabledContentTypes = extractEnabledContentTypes();
         }
@@ -280,12 +326,12 @@ class Settings {
     public Boolean getDomXssDetection() { return Boolean.valueOf(domXssDetection); }
     public Boolean getCspAnalysis() { return Boolean.valueOf(cspAnalysis); }
     public Boolean getAdvancedFiltering() { return Boolean.valueOf(advancedFiltering); }
-    public Boolean getConfidenceScoring() { return Boolean.valueOf(confidenceScoring); }
+    public Boolean getConfidenceScoring() { return Boolean.valueOf(confidenceScoring); } // TODO: Feature not yet implemented
     
     // Session getters
     public Boolean getSessionHandling() { return Boolean.valueOf(sessionHandling); }
-    public Boolean getAutoSessionHandling() { return Boolean.valueOf(autoSessionHandling); }
-    public Boolean getCsrfTokenHandling() { return Boolean.valueOf(csrfTokenHandling); }
+    public Boolean getAutoSessionHandling() { return Boolean.valueOf(autoSessionHandling); } // TODO: Feature not yet implemented
+    public Boolean getCsrfTokenHandling() { return Boolean.valueOf(csrfTokenHandling); } // TODO: Feature not yet implemented
     
     // XSS technique getters
     public Boolean getEnableWAFBypass() { return Boolean.valueOf(enableWAFBypass); }
@@ -298,7 +344,7 @@ class Settings {
     // Analysis getters
     public Boolean getDetailedReporting() { return Boolean.valueOf(detailedReporting); }
     public Boolean getExploitGeneration() { return Boolean.valueOf(exploitGeneration); }
-    public Boolean getRemediationSuggestions() { return Boolean.valueOf(remediationSuggestions); }
+    public Boolean getRemediationSuggestions() { return Boolean.valueOf(remediationSuggestions); } // TODO: Feature not yet implemented
     public Boolean getVerboseLogging() { return Boolean.valueOf(verboseLogging); }
     
     // Scanner mode getter
@@ -318,14 +364,14 @@ class Settings {
     public Integer getRetryAttempts() { return Integer.valueOf(retryAttempts); }
     public Integer getReadTimeout() { return Integer.valueOf(readTimeout); }
     
-    // Missing getter methods for compatibility
-    public Boolean getEnableJSFucker() { return Boolean.valueOf(enablePolyglotPayloads); }
-    public Boolean getEnablePrototypePollution() { return Boolean.valueOf(enableFrameworkSpecific); }
-    public Boolean getEnablePostMessageXSS() { return Boolean.valueOf(enableFrameworkSpecific); }
-    public Boolean getEnableWebComponents() { return Boolean.valueOf(enableFrameworkSpecific); }
-    public Boolean getEnableShadowDOM() { return Boolean.valueOf(enableFrameworkSpecific); }
-    public Boolean getEnableWebAssembly() { return Boolean.valueOf(enableFrameworkSpecific); }
-    public Boolean getEnableModernBrowserAPI() { return Boolean.valueOf(enableFrameworkSpecific); }
+    // Advanced payload-pack getters (fully wired)
+    public Boolean getEnableJSFucker() { return Boolean.valueOf(enableJSFucker); }
+    public Boolean getEnablePrototypePollution() { return Boolean.valueOf(enablePrototypePollution); }
+    public Boolean getEnablePostMessageXSS() { return Boolean.valueOf(enablePostMessageXSS); }
+    public Boolean getEnableWebComponents() { return Boolean.valueOf(enableWebComponents); }
+    public Boolean getEnableShadowDOM() { return Boolean.valueOf(enableShadowDOM); }
+    public Boolean getEnableWebAssembly() { return Boolean.valueOf(enableWebAssembly); }
+    public Boolean getEnableModernBrowserAPI() { return Boolean.valueOf(enableModernBrowserAPI); }
     
     // Core setters
     public void setScopeOnly(boolean scopeOnly) {
@@ -415,6 +461,42 @@ class Settings {
         this.enableBrowserSpecific = String.valueOf(enabled);
         callbacks.saveExtensionSetting("enableBrowserSpecific", this.enableBrowserSpecific);
     }
+
+    // Advanced payload-pack setters (fully wired)
+    public void setEnableJSFucker(boolean enabled) {
+        this.enableJSFucker = String.valueOf(enabled);
+        callbacks.saveExtensionSetting("enableJSFucker", this.enableJSFucker);
+    }
+
+    public void setEnablePrototypePollution(boolean enabled) {
+        this.enablePrototypePollution = String.valueOf(enabled);
+        callbacks.saveExtensionSetting("enablePrototypePollution", this.enablePrototypePollution);
+    }
+
+    public void setEnablePostMessageXSS(boolean enabled) {
+        this.enablePostMessageXSS = String.valueOf(enabled);
+        callbacks.saveExtensionSetting("enablePostMessageXSS", this.enablePostMessageXSS);
+    }
+
+    public void setEnableWebComponents(boolean enabled) {
+        this.enableWebComponents = String.valueOf(enabled);
+        callbacks.saveExtensionSetting("enableWebComponents", this.enableWebComponents);
+    }
+
+    public void setEnableShadowDOM(boolean enabled) {
+        this.enableShadowDOM = String.valueOf(enabled);
+        callbacks.saveExtensionSetting("enableShadowDOM", this.enableShadowDOM);
+    }
+
+    public void setEnableWebAssembly(boolean enabled) {
+        this.enableWebAssembly = String.valueOf(enabled);
+        callbacks.saveExtensionSetting("enableWebAssembly", this.enableWebAssembly);
+    }
+
+    public void setEnableModernBrowserAPI(boolean enabled) {
+        this.enableModernBrowserAPI = String.valueOf(enabled);
+        callbacks.saveExtensionSetting("enableModernBrowserAPI", this.enableModernBrowserAPI);
+    }
     
     // Analysis setters
     public void setDetailedReporting(boolean enabled) {
@@ -474,24 +556,32 @@ class Settings {
         callbacks.saveExtensionSetting("enableContextAwareAnalysis", this.enableContextAwareAnalysis);
     }
     
-    // Performance setters
-    public void setRequestRateLimit(int limit) { 
-        this.requestRateLimit = String.valueOf(limit); 
+    // Performance setters - with input validation to prevent crashes
+    public void setRequestRateLimit(int limit) {
+        if (limit < 0) limit = 0;
+        if (limit > 60000) limit = 60000;
+        this.requestRateLimit = String.valueOf(limit);
         callbacks.saveExtensionSetting("requestRateLimit", this.requestRateLimit);
     }
-    
-    public void setConnectionTimeout(int timeout) { 
-        this.connectionTimeout = String.valueOf(timeout); 
+
+    public void setConnectionTimeout(int timeout) {
+        if (timeout < 1000) timeout = 1000;
+        if (timeout > 120000) timeout = 120000;
+        this.connectionTimeout = String.valueOf(timeout);
         callbacks.saveExtensionSetting("connectionTimeout", this.connectionTimeout);
     }
-    
-    public void setRetryAttempts(int attempts) { 
-        this.retryAttempts = String.valueOf(attempts); 
+
+    public void setRetryAttempts(int attempts) {
+        if (attempts < 0) attempts = 0;
+        if (attempts > 10) attempts = 10;
+        this.retryAttempts = String.valueOf(attempts);
         callbacks.saveExtensionSetting("retryAttempts", this.retryAttempts);
     }
-    
-    public void setReadTimeout(int timeout) { 
-        this.readTimeout = String.valueOf(timeout); 
+
+    public void setReadTimeout(int timeout) {
+        if (timeout < 1000) timeout = 1000;
+        if (timeout > 120000) timeout = 120000;
+        this.readTimeout = String.valueOf(timeout);
         callbacks.saveExtensionSetting("readTimeout", this.readTimeout);
     }
     
@@ -542,6 +632,11 @@ class Settings {
     
     public ArrayList<Object[]> getContentTypes() {
         return contentTypes;
+    }
+    
+    public void setContentTypes(ArrayList<Object[]> contentTypes) {
+        this.contentTypes = contentTypes;
+        this.enabledContentTypes = extractEnabledContentTypes();
     }
     
     private boolean isHighRiskContentType(String contentType) {

@@ -9,7 +9,6 @@ import java.lang.management.*;
  * XSSDetector Performance Monitoring System - OPTIMIZED FOR TRUE POSITIVE DETECTION
  * Provides focused performance metrics for achieving 100% true positive vulnerabilities
  * 
- * @author Vikas Kumar
  * @version 2025.1.0
  */
 public class PerformanceMonitor {

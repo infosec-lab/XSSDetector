@@ -13,4 +13,7 @@ public interface IExtensionHelpers {
     int indexOf(byte[] data, byte[] pattern, boolean caseSensitive, int from, int to);
     IParameter buildParameter(String name, String value, byte type);
     byte[] updateParameter(byte[] request, IParameter parameter);
-} 
+    byte[] buildHttpMessage(List<String> headers, byte[] body);
+    String bytesToString(byte[] data);
+    byte[] stringToBytes(String data);
+}

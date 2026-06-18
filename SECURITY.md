@@ -25,8 +25,8 @@ We take security vulnerabilities seriously. If you discover a security vulnerabi
 To report a security vulnerability, please contact us privately:
 
 - **Email**: [security@xssdetector.com](mailto:security@xssdetector.com) (if available)
-- **GitHub Security**: [Create a private security advisory](https://github.com/vikaskumar/XSSDetector/security/advisories)
-- **Direct Contact**: [Contact via GitHub Issues](https://github.com/vikaskumar/XSSDetector/issues) (mark as private)
+- **GitHub Security**: [Create a private security advisory](https://github.com/XSSDetector/XSSDetector/security/advisories)
+- **Direct Contact**: [Contact via GitHub Issues](https://github.com/XSSDetector/XSSDetector/issues) (mark as private)
 
 ### 📋 Information to Include
 
@@ -119,15 +119,15 @@ When using XSSDetector:
 
 ### Primary Security Contact
 
-- **Name**: Vikas Kumar
-- **Role**: Lead Developer & Security Maintainer
-- **Email**: [Contact via GitHub](https://github.com/vikaskumar/XSSDetector/issues)
+- **Name**: XSSDetector Security Team
+- **Role**: Security Maintainer
+- **Email**: [Contact via GitHub](https://github.com/XSSDetector/XSSDetector/issues)
 - **PGP Key**: [If available]
 
 ### Security Team
 
-- **GitHub Security Team**: [GitHub Security](https://github.com/vikaskumar/XSSDetector/security)
-- **Community Security**: [Community Security](https://github.com/vikaskumar/XSSDetector/discussions)
+- **GitHub Security Team**: [GitHub Security](https://github.com/XSSDetector/XSSDetector/security)
+- **Community Security**: [Community Security](https://github.com/XSSDetector/XSSDetector/discussions)
 
 ## Security Resources
 

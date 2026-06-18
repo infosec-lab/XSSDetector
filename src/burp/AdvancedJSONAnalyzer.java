@@ -20,6 +20,9 @@ public class AdvancedJSONAnalyzer {
     private static final Pattern JSON_PATTERN = Pattern.compile("^\\s*[\\{\\[].*[\\}\\]]\\s*$", Pattern.DOTALL);
     private static final Pattern JSONP_PATTERN = Pattern.compile("^\\s*[\\w$]+\\s*\\(\\s*[\\{\\[].*[\\}\\]]\\s*\\)\\s*;?\\s*$", Pattern.DOTALL);
     private static final Pattern GRAPHQL_PATTERN = Pattern.compile("\"data\"\\s*:\\s*\\{.*\\}", Pattern.DOTALL);
+    private static final Pattern JSONRPC_PATTERN = Pattern.compile("\"jsonrpc\"\\s*:\\s*\"2\\.0\"", Pattern.CASE_INSENSITIVE);
+    private static final Pattern JSONAPI_PATTERN = Pattern.compile("\"data\"\\s*:\\s*\\{\\s*\"type\"\\s*:", Pattern.CASE_INSENSITIVE);
+    private static final Pattern JWT_PATTERN = Pattern.compile("^[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]+\\.[A-Za-z0-9-_]*$");
     
     // Modern API content types
     private static final String[] JSON_CONTENT_TYPES = {
@@ -101,6 +104,25 @@ public class AdvancedJSONAnalyzer {
         
         if (JSONP_PATTERN.matcher(responseBody).find()) {
             return JSONType.JSONP;
+        }
+        
+        // JSON-RPC detection
+        if (JSONRPC_PATTERN.matcher(responseBody).find() || 
+            responseBody.contains("\"jsonrpc\"") && responseBody.contains("\"method\"")) {
+            return JSONType.JSONRPC;
+        }
+        
+        // JSON API (jsonapi.org) format detection
+        if (JSONAPI_PATTERN.matcher(responseBody).find() || 
+            (responseBody.contains("\"data\"") && responseBody.contains("\"type\"") && 
+             responseBody.contains("\"attributes\""))) {
+            return JSONType.JSONAPI;
+        }
+        
+        // JWT detection (in response body or headers)
+        if (JWT_PATTERN.matcher(responseBody.trim()).find() || 
+            responseBody.contains("\"token\"") && JWT_PATTERN.matcher(responseBody).find()) {
+            return JSONType.JWT;
         }
         
         if (contentType.contains("text/event-stream") || 
@@ -222,6 +244,102 @@ public class AdvancedJSONAnalyzer {
     }
     
     /**
+     * Parse JSON-RPC structure
+     */
+    private JSONStructure parseJSONRPCStructure(String responseBody) {
+        JSONStructure structure = new JSONStructure();
+        structure.setType("JSON-RPC");
+        
+        // Extract JSON-RPC fields
+        if (responseBody.contains("\"jsonrpc\"")) {
+            structure.addField("jsonrpc", "string");
+        }
+        if (responseBody.contains("\"method\"")) {
+            structure.addField("method", "string");
+        }
+        if (responseBody.contains("\"params\"")) {
+            structure.addField("params", "object");
+        }
+        if (responseBody.contains("\"id\"")) {
+            structure.addField("id", "string|number");
+        }
+        if (responseBody.contains("\"result\"")) {
+            structure.addField("result", "object");
+        }
+        if (responseBody.contains("\"error\"")) {
+            structure.addField("error", "object");
+        }
+        
+        extractNestedFields(responseBody, structure, 0);
+        return structure;
+    }
+    
+    /**
+     * Parse JSON API (jsonapi.org) structure
+     */
+    private JSONStructure parseJSONAPIStructure(String responseBody) {
+        JSONStructure structure = new JSONStructure();
+        structure.setType("JSON API");
+        
+        // Extract JSON API fields
+        if (responseBody.contains("\"data\"")) {
+            structure.addField("data", "array|object");
+        }
+        if (responseBody.contains("\"included\"")) {
+            structure.addField("included", "array");
+        }
+        if (responseBody.contains("\"meta\"")) {
+            structure.addField("meta", "object");
+        }
+        if (responseBody.contains("\"links\"")) {
+            structure.addField("links", "object");
+        }
+        if (responseBody.contains("\"errors\"")) {
+            structure.addField("errors", "array");
+        }
+        
+        extractNestedFields(responseBody, structure, 0);
+        return structure;
+    }
+    
+    /**
+     * Parse JWT structure
+     */
+    private JSONStructure parseJWTStructure(String responseBody) {
+        JSONStructure structure = new JSONStructure();
+        structure.setType("JWT");
+        
+        // Extract JWT claims
+        if (responseBody.contains("\"sub\"")) {
+            structure.addField("sub", "string");
+        }
+        if (responseBody.contains("\"iss\"")) {
+            structure.addField("iss", "string");
+        }
+        if (responseBody.contains("\"aud\"")) {
+            structure.addField("aud", "string");
+        }
+        if (responseBody.contains("\"exp\"")) {
+            structure.addField("exp", "number");
+        }
+        if (responseBody.contains("\"iat\"")) {
+            structure.addField("iat", "number");
+        }
+        if (responseBody.contains("\"email\"")) {
+            structure.addField("email", "string");
+        }
+        if (responseBody.contains("\"name\"")) {
+            structure.addField("name", "string");
+        }
+        if (responseBody.contains("\"username\"")) {
+            structure.addField("username", "string");
+        }
+        
+        extractNestedFields(responseBody, structure, 0);
+        return structure;
+    }
+    
+    /**
      * Parse newline-delimited JSON structure
      */
     private JSONStructure parseNDJSONStructure(String responseBody) {
@@ -291,51 +409,173 @@ public class AdvancedJSONAnalyzer {
     
     /**
      * Analyze XSS risks in JSON response
+     * CRITICAL: JSON responses are NOT always executable in browser - they need vulnerable consumption
      */
     private List<String> analyzeXSSRisks(String responseBody, JSONType jsonType) {
         List<String> risks = new ArrayList<>();
         
-        // Check for script injection risks
-        if (responseBody.contains("<script") || responseBody.contains("javascript:")) {
-            risks.add("Script injection detected in JSON response");
-        }
+        // CRITICAL CHECK: JSON is only exploitable if consumed in vulnerable ways
+        // Standard JSON.parse() is safe - we need to check for dangerous consumption patterns
         
-        // Check for HTML injection risks
-        if (responseBody.contains("<") && responseBody.contains(">")) {
-            risks.add("HTML content detected in JSON response");
-        }
-        
-        // Check for event handler risks
-        String[] eventHandlers = {"onclick", "onload", "onerror", "onmouseover", "onfocus"};
-        for (String handler : eventHandlers) {
-            if (responseBody.toLowerCase().contains(handler)) {
-                risks.add("Event handler '" + handler + "' detected in JSON response");
+        // Check 1: JSONP - Directly executable as JavaScript
+        if (jsonType == JSONType.JSONP) {
+            risks.add("CRITICAL: JSONP is directly executable in browser - callback function executes JSON as code");
+            risks.add("JSONP callback may be vulnerable to injection attacks");
+            
+            // Check for callback injection
+            Matcher jsonpMatcher = JSONP_PATTERN.matcher(responseBody);
+            if (jsonpMatcher.find()) {
+                String callbackName = extractCallbackName(responseBody);
+                if (callbackName != null && !isSafeCallbackName(callbackName)) {
+                    risks.add("Unsafe JSONP callback name detected: " + callbackName);
+                }
             }
         }
         
-        // Check for URL injection risks
-        if (responseBody.contains("javascript:") || responseBody.contains("data:text/html")) {
-            risks.add("Dangerous URL scheme detected in JSON response");
+        // Check 2: Script tag with JSON content-type (rare but dangerous)
+        if (responseBody.contains("<script") && responseBody.contains("application/json")) {
+            risks.add("CRITICAL: JSON served in script tag - may be executed as JavaScript");
         }
         
-        // Check for template injection risks
+        // Check 3: Check if JSON contains executable code patterns
+        // This indicates JSON might be used with eval() or similar
+        if (containsExecutablePatterns(responseBody)) {
+            risks.add("WARNING: JSON contains patterns that suggest unsafe consumption (eval, innerHTML, etc.)");
+        }
+        
+        // Check 4: Check for dangerous field names that suggest unsafe usage
+        if (hasDangerousFieldNames(responseBody)) {
+            risks.add("WARNING: JSON contains field names suggesting unsafe DOM manipulation (innerHTML, outerHTML, etc.)");
+        }
+        
+        // Check 5: Check for HTML/script content in JSON values
+        // This suggests JSON might be used with innerHTML
+        if (containsHTMLInValues(responseBody)) {
+            risks.add("WARNING: JSON contains HTML/script content - may be used with innerHTML or similar");
+        }
+        
+        // Check 6: Check for template injection patterns
         if (responseBody.contains("{{") || responseBody.contains("${")) {
-            risks.add("Template injection patterns detected in JSON response");
+            risks.add("WARNING: Template injection patterns detected - JSON may be processed by template engine");
         }
         
-        // JSONP-specific risks
-        if (jsonType == JSONType.JSONP) {
-            risks.add("JSONP callback function may be vulnerable to injection");
-        }
-        
-        // GraphQL-specific risks
+        // Check 7: GraphQL-specific risks
         if (jsonType == JSONType.GRAPHQL) {
             if (responseBody.contains("\"errors\"")) {
                 risks.add("GraphQL errors may contain sensitive information");
             }
         }
         
+        // Check 8: Check for unsafe JSON consumption indicators in response
+        // Look for patterns that suggest the JSON will be used unsafely
+        if (suggestsUnsafeConsumption(responseBody)) {
+            risks.add("WARNING: Response suggests JSON may be consumed unsafely (check client-side code)");
+        }
+        
         return risks;
+    }
+    
+    /**
+     * Check if JSON contains patterns suggesting executable code
+     */
+    private boolean containsExecutablePatterns(String responseBody) {
+        String[] executablePatterns = {
+            "eval\\s*\\(",
+            "Function\\s*\\(",
+            "setTimeout\\s*\\(",
+            "setInterval\\s*\\(",
+            "document\\.write",
+            "innerHTML\\s*=",
+            "outerHTML\\s*=",
+            "javascript:",
+            "<script",
+            "onerror\\s*=",
+            "onload\\s*="
+        };
+        
+        for (String pattern : executablePatterns) {
+            if (Pattern.compile(pattern, Pattern.CASE_INSENSITIVE).matcher(responseBody).find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    /**
+     * Check if JSON has dangerous field names suggesting unsafe usage
+     */
+    private boolean hasDangerousFieldNames(String responseBody) {
+        for (String dangerous : DANGEROUS_JSON_FIELDS) {
+            // Check if field name appears in JSON structure
+            Pattern fieldPattern = Pattern.compile("\"" + Pattern.quote(dangerous) + "\"\\s*:", Pattern.CASE_INSENSITIVE);
+            if (fieldPattern.matcher(responseBody).find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    /**
+     * Check if JSON values contain HTML/script content
+     */
+    private boolean containsHTMLInValues(String responseBody) {
+        // Look for HTML tags in JSON string values
+        Pattern htmlInJson = Pattern.compile("\"[^\"]*<[^>]+>[^\"]*\"", Pattern.CASE_INSENSITIVE);
+        if (htmlInJson.matcher(responseBody).find()) {
+            return true;
+        }
+        
+        // Look for script tags in JSON
+        if (responseBody.contains("<script") || responseBody.contains("</script>")) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Check if response suggests unsafe JSON consumption
+     */
+    private boolean suggestsUnsafeConsumption(String responseBody) {
+        // Check for comments or patterns suggesting unsafe usage
+        String[] unsafeIndicators = {
+            "//.*eval",
+            "//.*innerHTML",
+            "//.*dangerouslySetInnerHTML",
+            "JSON\\.parse.*eval",
+            "JSON\\.parse.*innerHTML",
+            "response\\.innerHTML",
+            "data\\.innerHTML"
+        };
+        
+        for (String indicator : unsafeIndicators) {
+            if (Pattern.compile(indicator, Pattern.CASE_INSENSITIVE).matcher(responseBody).find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    /**
+     * Extract callback function name from JSONP
+     */
+    private String extractCallbackName(String responseBody) {
+        Matcher matcher = Pattern.compile("^\\s*([\\w$]+)\\s*\\(").matcher(responseBody);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        return null;
+    }
+    
+    /**
+     * Check if callback name is safe (alphanumeric only, no special chars)
+     */
+    private boolean isSafeCallbackName(String callbackName) {
+        // Safe callback names should only contain alphanumeric and underscore/dollar
+        return callbackName.matches("^[a-zA-Z_$][a-zA-Z0-9_$]*$") && 
+               !callbackName.toLowerCase().contains("eval") &&
+               !callbackName.toLowerCase().contains("function") &&
+               !callbackName.toLowerCase().contains("constructor");
     }
     
     /**
@@ -420,36 +660,60 @@ public class AdvancedJSONAnalyzer {
     
     /**
      * Calculate overall risk score
+     * CRITICAL: Only high scores for actually exploitable JSON (JSONP, unsafe consumption)
      */
     private int calculateRiskScore(JSONAnalysisResult result) {
         int score = 0;
         
-        // Base score for JSON type
+        // Base score for JSON type - JSONP is directly executable, others need unsafe consumption
         switch (result.getJsonType()) {
-            case GRAPHQL:
-                score += 20;
-                break;
             case JSONP:
-                score += 30;
+                // JSONP is directly executable - HIGH RISK
+                score += 50;
                 break;
-            case STREAMING:
+            case GRAPHQL:
+                // GraphQL can be risky if errors contain user input
                 score += 15;
                 break;
-            case NDJSON:
+            case STREAMING:
                 score += 10;
                 break;
-            default:
+            case NDJSON:
                 score += 5;
+                break;
+            case JSON_OBJECT:
+            case JSON_ARRAY:
+                // Standard JSON is safe unless consumed unsafely - LOW base score
+                score += 5;
+                break;
+            default:
+                score += 0;
         }
         
-        // Add score for XSS risks
-        score += result.getXssRisks().size() * 15;
+        // Add score for XSS risks - weight JSONP risks higher
+        for (String risk : result.getXssRisks()) {
+            if (risk.contains("CRITICAL") || risk.contains("JSONP")) {
+                score += 25; // High weight for critical/JSONP risks
+            } else if (risk.contains("WARNING")) {
+                score += 10; // Medium weight for warnings
+            } else {
+                score += 5; // Low weight for other risks
+            }
+        }
         
         // Add score for dangerous patterns
         score += result.getDangerousPatterns().size() * 10;
         
         // Add score for dangerous fields
-        score += result.getJsonStructure().getDangerousFields().size() * 20;
+        score += result.getJsonStructure().getDangerousFields().size() * 15;
+        
+        // CRITICAL: If standard JSON with no unsafe consumption indicators, reduce score
+        if (result.getJsonType() == JSONType.JSON_OBJECT || result.getJsonType() == JSONType.JSON_ARRAY) {
+            if (result.getXssRisks().isEmpty() && result.getDangerousPatterns().isEmpty()) {
+                // Safe JSON with no indicators of unsafe consumption - very low risk
+                score = Math.min(score, 10);
+            }
+        }
         
         return Math.min(100, score);
     }
@@ -471,7 +735,7 @@ public class AdvancedJSONAnalyzer {
      * JSON Type Enum
      */
     public enum JSONType {
-        NOT_JSON, JSON_OBJECT, JSON_ARRAY, JSONP, GRAPHQL, STREAMING, NDJSON
+        NOT_JSON, JSON_OBJECT, JSON_ARRAY, JSONP, GRAPHQL, STREAMING, NDJSON, JSONRPC, JSONAPI, JWT
     }
     
     /**

@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Java](https://img.shields.io/badge/Java-8%2B-blue.svg)](https://www.oracle.com/java/)
 [![Burp Suite](https://img.shields.io/badge/Burp%20Suite-2023.1%2B-orange.svg)](https://portswigger.net/burp)
-[![Version](https://img.shields.io/badge/Version-2.0.0--Production%20Ready-green.svg)](https://github.com/vikaskumar/XSSDetector/releases)
+[![Version](https://img.shields.io/badge/Version-2.0.0--Production%20Ready-green.svg)](https://github.com/XSSDetector/XSSDetector/releases)
 
 *A comprehensive Burp Suite extension for detecting all forms of XSS, client-side injections, and SPA/API abuse using advanced payloads, encoding, and bypass techniques.*
 
@@ -70,7 +70,7 @@
 ## Installation
 
 ### Prerequisites
-- **Java 8 or higher** (Java 11+ recommended)
+- **Java 11 or higher** (required for building; JAR is compiled for Java 11 compatibility)
 - **Burp Suite Professional 2023.1 or higher**
 - **Windows, macOS, or Linux**
 
@@ -79,7 +79,7 @@
 1. **Download the Latest Release**
    ```bash
    # Clone the repository
-   git clone https://github.com/vikaskumar/XSSDetector.git
+   git clone https://github.com/XSSDetector/XSSDetector.git
    cd XSSDetector
    
    # Build the extension
@@ -252,8 +252,8 @@ XSSDetector/
 ### Building from Source
 ```bash
 # Prerequisites
-java -version  # Java 8 or higher
-javac -version # Java compiler
+java -version  # Java 11 or higher (required)
+javac -version # Java compiler (must be Java 11+)
 
 # Build on Linux/macOS
 chmod +x build.sh
@@ -269,7 +269,7 @@ ls -la dist/XSSDetector.jar
 ### Development Setup
 1. **Clone the Repository**
    ```bash
-   git clone https://github.com/vikaskumar/XSSDetector.git
+   git clone https://github.com/XSSDetector/XSSDetector.git
    cd XSSDetector
    ```
 
@@ -346,6 +346,5 @@ We welcome contributions from the security community! Here's how you can help:
 *Built with ❤️ for the security community*
 
 [![GitHub](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/infosec-lab/backsense)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/vikas-k-8b2a495b/)
 
 </div> 

@@ -944,7 +944,12 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             if (settings.getScopeOnly() && !callbacks.isInScope(helpers.analyzeRequest(baseRequestResponse).getUrl())) {
                 return issues;
             }
-            
+
+            // Skip excessively large responses (>10MB) to prevent memory/performance issues
+            if (baseRequestResponse.getResponse() != null && baseRequestResponse.getResponse().length > 10 * 1024 * 1024) {
+                return issues;
+            }
+
             // CRITICAL: Step 1 - Basic reflection detection (always enabled - foundation)
             // This is the core detection that matches reflector plugin behavior
             if (checkReflection != null) {
@@ -1108,28 +1113,33 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             // Generate unique key for this issue
             String issueKey = generateIssueKey(issue);
 
-            // Check if already reported
-            if (reportedIssueKeys.contains(issueKey)) {
+            // THREAD-SAFE: Use add() atomically - returns false if key already exists.
+            // This eliminates the race condition where two threads both pass contains()
+            // and both report the same issue.
+            if (!reportedIssueKeys.add(issueKey)) {
+                // Key already existed = duplicate
                 if (settings != null && settings.getVerboseLogging()) {
                     callbacks.printOutput("[" + PLUGIN_NAME + "] Duplicate issue skipped: " + issue.getIssueName());
                 }
                 return false;
             }
 
-            // Clean up old entries if cache is full
+            // Clean up old entries if cache is full (after add, so we don't lose the one we just added)
             if (reportedIssueKeys.size() >= MAX_REPORTED_ISSUES_CACHE) {
                 // Clear half the cache (simple cleanup strategy)
                 int toRemove = MAX_REPORTED_ISSUES_CACHE / 2;
                 Iterator<String> iter = reportedIssueKeys.iterator();
                 while (iter.hasNext() && toRemove > 0) {
-                    iter.next();
-                    iter.remove();
-                    toRemove--;
+                    String key = iter.next();
+                    // Don't remove the key we just added
+                    if (!key.equals(issueKey)) {
+                        iter.remove();
+                        toRemove--;
+                    }
                 }
             }
 
-            // Add to reported set and report to Burp
-            reportedIssueKeys.add(issueKey);
+            // Report to Burp
             callbacks.addScanIssue(issue);
 
             callbacks.printOutput("[" + PLUGIN_NAME + "] Issue reported: " + issue.getIssueName());
@@ -1188,7 +1198,15 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
     private String extractParameterFromIssueName(String issueName) {
         if (issueName == null) return null;
 
-        // Split by " - " and get last part
+        // First try: extract parameter from trailing parenthesized group
+        // Matches formats like "... (paramName)" at end of string
+        int lastOpen = issueName.lastIndexOf('(');
+        int lastClose = issueName.lastIndexOf(')');
+        if (lastOpen > 0 && lastClose > lastOpen && lastClose == issueName.length() - 1) {
+            return issueName.substring(lastOpen + 1, lastClose).trim();
+        }
+
+        // Fallback: split by " - " and get last part
         String[] parts = issueName.split(" - ");
         if (parts.length >= 3) {
             return parts[parts.length - 1].trim();
@@ -1259,6 +1277,11 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             return;
         }
 
+        // CRITICAL: Skip excessively large responses (>10MB) to prevent memory issues
+        if (messageInfo.getResponse().length > 10 * 1024 * 1024) {
+            return;
+        }
+
         // Check scope if enabled
         try {
             if (settings != null && settings.getScopeOnly()) {
@@ -1326,15 +1349,53 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 }
             }
 
-            // DOM XSS detection for Proxy traffic (high value for real-time)
+            // DOM XSS detection for Proxy traffic - uses same validation as doPassiveScan
+            // CRITICAL: Require payload reflection to avoid false positives
             if (toolFlag == IBurpExtenderCallbacks.TOOL_PROXY && settings != null && settings.getDomXssDetection()) {
                 if (domXssDetector != null) {
                     try {
-                        EnhancedDOMXSSDetector.DOMXSSResult domResult = domXssDetector.analyzeDOMXSS(messageInfo);
-                        if (domResult != null && domResult.isVulnerable()) {
-                            IScanIssue domIssue = createDOMXSSIssue(messageInfo, domResult);
-                            if (domIssue != null) {
-                                issues.add(domIssue);
+                        // Check content type - skip JS files
+                        String domContentType = getResponseContentType(messageInfo);
+                        boolean isJsFile = domContentType != null && (
+                            domContentType.toLowerCase().contains("application/javascript") ||
+                            domContentType.toLowerCase().contains("text/javascript"));
+
+                        if (!isJsFile) {
+                            EnhancedDOMXSSDetector.DOMXSSResult domResult = domXssDetector.analyzeDOMXSS(messageInfo);
+                            if (domResult != null && domResult.isVulnerable()) {
+                                // Same validation as doPassiveScan: require payload reflection
+                                boolean hasPayloadReflection = false;
+                                try {
+                                    byte[] responseBytes = messageInfo.getResponse();
+                                    if (responseBytes != null) {
+                                        int bodyOff = helpers.analyzeResponse(responseBytes).getBodyOffset();
+                                        String respBody = new String(java.util.Arrays.copyOfRange(responseBytes, bodyOff, responseBytes.length), StandardCharsets.UTF_8);
+                                        IRequestInfo ri = helpers.analyzeRequest(messageInfo);
+                                        java.net.URL reqUrl = ri.getUrl();
+                                        if (reqUrl != null && reqUrl.getQuery() != null) {
+                                            for (String param : reqUrl.getQuery().split("&")) {
+                                                if (param.contains("=")) {
+                                                    String[] parts = param.split("=", 2);
+                                                    if (parts.length == 2) {
+                                                        String paramVal = parts[1];
+                                                        try { paramVal = helpers.urlDecode(paramVal); } catch (Exception ignored) {}
+                                                        if (paramVal.length() > 3 && respBody.contains(paramVal)) {
+                                                            hasPayloadReflection = true;
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                } catch (Exception ex) { /* continue */ }
+
+                                if (hasPayloadReflection) {
+                                    IScanIssue domIssue = createDOMXSSIssue(messageInfo, domResult);
+                                    if (domIssue != null) {
+                                        issues.add(domIssue);
+                                    }
+                                }
                             }
                         }
                     } catch (Exception e) {
@@ -1381,8 +1442,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         if (contentType == null) return false;
         String lower = contentType.toLowerCase();
         return lower.contains("html") || lower.contains("javascript") ||
-               lower.contains("json") || lower.contains("xml") ||
-               lower.contains("text/plain");
+               lower.contains("xml") || lower.contains("text/plain");
     }
 
     /**
@@ -1465,18 +1525,81 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
 
             // Build professional issue detail
             StringBuilder detail = new StringBuilder();
-            detail.append("<h3>").append(vuln.type).append("</h3>\n");
+            detail.append("<h3>").append(escapeHtml(vuln.type)).append("</h3>\n");
             detail.append("<table border='1' cellpadding='5'>\n");
             detail.append("<tr><td><b>Severity</b></td><td>").append(vuln.severity).append("</td></tr>\n");
             detail.append("<tr><td><b>Confidence</b></td><td>").append(String.format("%.0f%%", vuln.confidence)).append("</td></tr>\n");
+            detail.append("<tr><td><b>HTTP Method</b></td><td>").append(vuln.httpMethod != null ? vuln.httpMethod : reqInfo.getMethod()).append("</td></tr>\n");
             detail.append("<tr><td><b>Parameter</b></td><td>").append(escapeHtml(vuln.parameter)).append("</td></tr>\n");
+            if (vuln.paramType != null && !vuln.paramType.isEmpty()) {
+                detail.append("<tr><td><b>Parameter Location</b></td><td>").append(escapeHtml(vuln.paramType)).append("</td></tr>\n");
+            }
+            if (vuln.sinkType != null && !vuln.sinkType.isEmpty()) {
+                detail.append("<tr><td><b>Sink</b></td><td><code>").append(escapeHtml(vuln.sinkType)).append("</code></td></tr>\n");
+            }
+            if (vuln.targetUrl != null && !vuln.targetUrl.isEmpty()) {
+                detail.append("<tr><td><b>Target URL</b></td><td>").append(escapeHtml(vuln.targetUrl)).append("</td></tr>\n");
+            }
+            if (vuln.messageKeys != null && !vuln.messageKeys.isEmpty()) {
+                detail.append("<tr><td><b>Message Keys</b></td><td><code>").append(escapeHtml(vuln.messageKeys)).append("</code></td></tr>\n");
+            }
             detail.append("</table>\n\n");
 
             detail.append("<h4>Description</h4>\n");
             detail.append("<p>").append(escapeHtml(vuln.description)).append("</p>\n\n");
 
-            detail.append("<h4>Proof of Concept Payload</h4>\n");
-            detail.append("<pre>").append(escapeHtml(vuln.payload)).append("</pre>\n\n");
+            if (vuln.evidence != null && !vuln.evidence.isEmpty()) {
+                detail.append("<h4>Evidence (Code Snippet)</h4>\n");
+                detail.append("<pre>").append(escapeHtml(vuln.evidence)).append("</pre>\n\n");
+            }
+
+            if (vuln.handlerCode != null && !vuln.handlerCode.isEmpty()) {
+                detail.append("<h4>Handler Code</h4>\n");
+                detail.append("<pre>").append(escapeHtml(vuln.handlerCode)).append("</pre>\n\n");
+            }
+
+            // Gate exploit PoC and reproduction steps behind exploitGeneration setting
+            boolean showExploits = settings == null || Boolean.TRUE.equals(settings.getExploitGeneration());
+            if (showExploits) {
+                detail.append("<h4>Proof of Concept Payload</h4>\n");
+                detail.append("<pre>").append(escapeHtml(vuln.payload)).append("</pre>\n\n");
+
+                // Steps to Reproduce section - ACTIONABLE, not template text
+                detail.append("<h4>Steps to Reproduce</h4>\n");
+                detail.append("<ol>\n");
+                String method = vuln.httpMethod != null ? vuln.httpMethod : reqInfo.getMethod();
+                String targetDisplay = vuln.targetUrl != null ? vuln.targetUrl : url.toString();
+
+                if (vuln.paramType != null && vuln.paramType.startsWith("Client-side")) {
+                    // Client-side vulnerability (PostMessage, WebSocket, etc.)
+                    detail.append("<li>Open the target page in a browser: <code>").append(escapeHtml(targetDisplay)).append("</code></li>\n");
+                    detail.append("<li>This is a <b>client-side</b> vulnerability (").append(escapeHtml(vuln.paramType)).append("). ");
+                    detail.append("Create an attacker-controlled HTML page with the PoC payload above.</li>\n");
+                    if (vuln.sinkType != null && !vuln.sinkType.isEmpty()) {
+                        detail.append("<li>The message data flows to the <code>").append(escapeHtml(vuln.sinkType)).append("</code> sink in the handler.</li>\n");
+                    }
+                    detail.append("<li>Open the attacker page in the same browser session to trigger the exploit.</li>\n");
+                    detail.append("<li>Verify JavaScript execution in the target page context (check browser console).</li>\n");
+                } else if (vuln.parameter != null && !"Multiple".equals(vuln.parameter) && !"N/A".equals(vuln.parameter)) {
+                    // Server-side reflected vulnerability with a specific parameter
+                    detail.append("<li>Send a <b>").append(method).append("</b> request to: <code>").append(escapeHtml(targetDisplay)).append("</code></li>\n");
+                    detail.append("<li>Set the <b>").append(escapeHtml(vuln.parameter)).append("</b> parameter");
+                    if (vuln.paramType != null && !vuln.paramType.isEmpty()) {
+                        detail.append(" (in <b>").append(escapeHtml(vuln.paramType)).append("</b>)");
+                    }
+                    detail.append(" to the PoC payload above.</li>\n");
+                    if (vuln.sinkType != null && !vuln.sinkType.isEmpty()) {
+                        detail.append("<li>The reflected value reaches the <code>").append(escapeHtml(vuln.sinkType)).append("</code> sink in JavaScript.</li>\n");
+                    }
+                    detail.append("<li>Observe the response - verify the payload executes in the browser.</li>\n");
+                } else {
+                    // Generic fallback
+                    detail.append("<li>Navigate to: <code>").append(escapeHtml(targetDisplay)).append("</code></li>\n");
+                    detail.append("<li>Review the evidence above to identify the vulnerable code pattern.</li>\n");
+                    detail.append("<li>Test with the PoC payload to confirm exploitability.</li>\n");
+                }
+                detail.append("</ol>\n\n");
+            }
 
             detail.append("<h4>Remediation</h4>\n");
             detail.append("<p>").append(escapeHtml(vuln.remediation)).append("</p>\n");
@@ -1490,7 +1613,12 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
 
                 @Override
                 public String getIssueName() {
-                    return "Cross-site Scripting - " + vuln.type + " (" + vuln.parameter + ")";
+                    String issueName = "Cross-site Scripting - " + vuln.type;
+                    if (vuln.sinkType != null && !vuln.sinkType.isEmpty()) {
+                        issueName += " via " + vuln.sinkType;
+                    }
+                    issueName += " (" + vuln.parameter + ")";
+                    return issueName;
                 }
 
                 @Override
@@ -1666,9 +1794,13 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                         }
                     }
                 } else {
-                    // No content types configured - default to text/html and application/json only
-                    contentTypeEnabled = lowerContentType.contains("text/html") || 
-                                        lowerContentType.contains("application/json");
+                    // No content types configured - default to types that render in browsers
+                    // JSON/GraphQL are data formats, not executable — skip them
+                    contentTypeEnabled = lowerContentType.contains("text/html") ||
+                                        lowerContentType.contains("application/xhtml") ||
+                                        lowerContentType.contains("text/xml") ||
+                                        lowerContentType.contains("application/xml") ||
+                                        lowerContentType.contains("text/plain");
                 }
                 
                 // STRICT: Skip if not enabled (no exceptions)
@@ -1692,12 +1824,17 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                     String responseContentType = getResponseContentType(requestResponse);
                     if (responseContentType != null) {
                         String lowerContentType = responseContentType.toLowerCase();
-                        if (lowerContentType.contains("application/javascript") || 
+                        if (lowerContentType.contains("application/javascript") ||
                             lowerContentType.contains("text/javascript") ||
                             lowerContentType.contains("application/x-javascript") ||
-                            lowerContentType.contains("application/ecmascript")) {
-                            // Skip DOM XSS detection for JavaScript files - they're not HTML/DOM contexts
-                            callbacks.printOutput("[" + PLUGIN_NAME + "] Skipping DOM XSS detection for JavaScript file: " + responseContentType);
+                            lowerContentType.contains("application/ecmascript") ||
+                            lowerContentType.contains("application/json") ||
+                            lowerContentType.contains("application/graphql") ||
+                            lowerContentType.contains("application/hal+json")) {
+                            // Skip DOM XSS detection for non-HTML content (JS files, JSON APIs, etc.)
+                            if (settings.getVerboseLogging()) {
+                                callbacks.printOutput("[" + PLUGIN_NAME + "] Skipping DOM XSS detection for non-HTML content: " + responseContentType);
+                            }
                         } else {
                             // Only perform DOM XSS detection for HTML/XML contexts
                             EnhancedDOMXSSDetector.DOMXSSResult domResult = domXssDetector.analyzeDOMXSS(requestResponse);
@@ -1909,6 +2046,10 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             // Detects DOM Clobbering, mXSS, Prototype Pollution XSS, PostMessage XSS,
             // Service Worker hijacking, Import Maps manipulation, Trusted Types bypass,
             // GraphQL XSS, and WebSocket XSS
+            //
+            // CRITICAL: ModernXSSAnalyzer now internally filters by minimum confidence (70%)
+            // and requires actual evidence (reflected parameters, data flow, etc.)
+            // before reporting. This eliminates false positives like "SVG on page = mXSS".
             if (settings.getModernDetection() && modernXssAnalyzer != null) {
                 try {
                     ModernXSSAnalyzer.ModernXSSResult modernResult = modernXssAnalyzer.analyzeForModernXSS(requestResponse);
@@ -1920,11 +2061,9 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                                 issues.add(modernIssue);
                             }
                         }
-                        if (settings.getVerboseLogging()) {
-                            callbacks.printOutput("[" + PLUGIN_NAME + "] Modern XSS Analyzer found " +
-                                modernResult.getTotalCount() + " potential issues (Risk: " +
-                                modernResult.overallRiskLevel + ")");
-                        }
+                        callbacks.printOutput("[" + PLUGIN_NAME + "] Modern XSS Analyzer: " +
+                            modernResult.getTotalCount() + " verified findings (Risk: " +
+                            modernResult.overallRiskLevel + ")");
                     }
                 } catch (Exception e) {
                     callbacks.printError("[" + PLUGIN_NAME + "] Error in Modern XSS analysis: " + e.getMessage());

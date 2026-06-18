@@ -9,7 +9,6 @@ import java.util.function.*;
  * XSSDetector Error Recovery System
  * Provides automated error recovery, circuit breaker pattern, retry mechanisms, and fallback strategies
  * 
- * @author Vikas Kumar
  * @version 2025.1.0
  */
 public class ErrorRecoverySystem {

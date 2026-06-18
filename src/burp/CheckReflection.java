@@ -95,7 +95,7 @@ public class CheckReflection {
      * This allows reusing the same CheckReflection instance across multiple requests.
      * @return The body offset for the response, or -1 if response is null
      */
-    public int setRequestResponse(IHttpRequestResponse requestResponse) {
+    public synchronized int setRequestResponse(IHttpRequestResponse requestResponse) {
         this.iHttpRequestResponse = requestResponse;
         if (requestResponse != null && requestResponse.getResponse() != null) {
             try {
@@ -116,7 +116,7 @@ public class CheckReflection {
      * Check response with the given request/response pair.
      * This is the preferred method - reuses instance and sets request/response inline.
      */
-    public List<Map> checkResponseFor(IHttpRequestResponse requestResponse) {
+    public synchronized List<Map> checkResponseFor(IHttpRequestResponse requestResponse) {
         setRequestResponse(requestResponse);
         return checkResponse();
     }
@@ -124,7 +124,7 @@ public class CheckReflection {
     /**
      * Perform passive scan for XSS vulnerabilities with comprehensive error handling
      */
-    public List<IScanIssue> doPassiveScan(IHttpRequestResponse requestResponse) {
+    public synchronized List<IScanIssue> doPassiveScan(IHttpRequestResponse requestResponse) {
         List<IScanIssue> issues = new ArrayList<>();
 
         try {
@@ -329,6 +329,9 @@ public class CheckReflection {
                             testPayload = "><script>alert(1)</script>";
                         }
                         
+                        // Capture original payload before encoding
+                        String originalPayload = testPayload;
+
                         // CRITICAL FIX: Encode payload based on reflection context (but don't break it!)
                         testPayload = encodePayloadForContext(testPayload, reflectionContext, contentType);
                         
@@ -350,8 +353,10 @@ public class CheckReflection {
                             }
                         }
                         
-                        vulnerabilityData.put("payload", testPayload); // Update payload in vulnerability data
-                        vulnerabilityData.put("ENCODED_PAYLOAD", true);
+                        vulnerabilityData.put("payload", testPayload); // encoded version actually used
+                        vulnerabilityData.put("ORIGINAL_PAYLOAD", originalPayload); // pre-encoding version
+                        vulnerabilityData.put("ENCODED_PAYLOAD", testPayload); // actual encoded string (not boolean!)
+                        vulnerabilityData.put("IS_ENCODED", !testPayload.equals(originalPayload));
                         vulnerabilityData.put("ENCODING_CONTEXT", reflectionContext);
                         vulnerabilityData.put("IS_URL_PARAMETER", isURLParameter);
                         // ADVANCED: Store browser execution context information
@@ -374,8 +379,10 @@ public class CheckReflection {
                             }
                         }
                         
-                        vulnerabilityData.put("payload", testPayload);
-                        vulnerabilityData.put("ENCODED_PAYLOAD", true);
+                        vulnerabilityData.put("payload", testPayload); // encoded version actually used
+                        vulnerabilityData.put("ORIGINAL_PAYLOAD", paramValue); // pre-encoding original
+                        vulnerabilityData.put("ENCODED_PAYLOAD", testPayload); // actual encoded string (not boolean!)
+                        vulnerabilityData.put("IS_ENCODED", !testPayload.equals(paramValue));
                         vulnerabilityData.put("ENCODING_CONTEXT", reflectionContext);
                         vulnerabilityData.put("IS_URL_PARAMETER", isURLParameter);
                         // ADVANCED: Store browser execution context information
@@ -568,6 +575,26 @@ public class CheckReflection {
                                                                 // CRITICAL: Check if bypass payload is reflected RAW (not encoded)
                                                                 boolean bypassReflected = bypassResponseBody.contains(bypassPayload);
 
+                                                                // FIX: Reject reflections in error messages (WAF blocks, 403s, etc.)
+                                                                if (bypassReflected) {
+                                                                    int bpPos = bypassResponseBody.indexOf(bypassPayload);
+                                                                    int ctxS = Math.max(0, bpPos - 200);
+                                                                    int ctxE = Math.min(bypassResponseBody.length(), bpPos + bypassPayload.length() + 200);
+                                                                    String errCtx = bypassResponseBody.substring(ctxS, ctxE).toLowerCase();
+                                                                    if (errCtx.contains("error") || errCtx.contains("not allowed") ||
+                                                                        errCtx.contains("blocked") || errCtx.contains("forbidden") ||
+                                                                        errCtx.contains("invalid") || errCtx.contains("rejected") ||
+                                                                        errCtx.contains("denied") || errCtx.contains("security")) {
+                                                                        bypassReflected = false; // Error page reflection, not real XSS
+                                                                    }
+                                                                    // Also check HTTP status code
+                                                                    IResponseInfo bri = helpers.analyzeResponse(bypassResponse);
+                                                                    short bsc = bri.getStatusCode();
+                                                                    if (bsc == 403 || bsc == 406 || bsc == 429 || bsc == 503) {
+                                                                        bypassReflected = false; // WAF/rate-limit block
+                                                                    }
+                                                                }
+
                                                                 // Also verify it's not in a safe context
                                                                 if (bypassReflected && !isReflectionInSafeContext(bypassResponseBody, bypassPayload, -1)) {
                                                                     callbacks.printOutput("[XSSDetector] BYPASS SUCCESSFUL: " +
@@ -659,9 +686,9 @@ public class CheckReflection {
                                 // CRITICAL: Only mark as CONFIRMED if we have PROOF in both request AND response
                                 // CRITICAL FIX: For cookie parameters, require STRICT payload reflection (cookies rarely reflect)
                                 Object paramTypeObjCookie = parameter.get(TYPE);
-                                boolean isCookieParam = (paramTypeObjCookie != null && 
-                                    (paramTypeObj instanceof Integer && ((Integer) paramTypeObj).intValue() == IParameter.PARAM_COOKIE) ||
-                                    (paramTypeObj instanceof Byte && ((Byte) paramTypeObj).byteValue() == IParameter.PARAM_COOKIE));
+                                boolean isCookieParam = (paramTypeObjCookie != null &&
+                                    ((paramTypeObjCookie instanceof Integer && ((Integer) paramTypeObjCookie).intValue() == IParameter.PARAM_COOKIE) ||
+                                    (paramTypeObjCookie instanceof Byte && ((Byte) paramTypeObjCookie).byteValue() == IParameter.PARAM_COOKIE)));
                                 
                                 // For cookie parameters, be EXTRA strict - require actual payload reflection
                                 if (isCookieParam && !payloadInResponse) {
@@ -814,25 +841,22 @@ public class CheckReflection {
                         // Get reflection data
                         String reflCtx = (String) vulnerabilityData.get("REFLECTION_CONTEXT");
                         Object confScoreObj = vulnerabilityData.get("CONFIDENCE_SCORE");
-                        double confScore = confScoreObj instanceof Number ? ((Number) confScoreObj).doubleValue() : 50.0;
-                        boolean payloadWasReflected = Boolean.TRUE.equals(vulnerabilityData.get("CONFIRMED_XSS")) ||
-                                                      Boolean.TRUE.equals(parameter.get("SYMBOLS_REFLECTED"));
+                        double confScore = confScoreObj instanceof Number ? ((Number) confScoreObj).doubleValue() : 0.0;
+                        boolean payloadWasReflected = Boolean.TRUE.equals(vulnerabilityData.get("CONFIRMED_XSS"));
                         String testPayloadUsed = (String) vulnerabilityData.get("payload");
 
-                        // CRITICAL FIX: Use simpler issue creation that actually reports findings
-                        // First try the simplified method which has sensible validation
-                        issue = issueReporter.createXSSIssue(
-                            requestResponse,
-                            paramName,
-                            testPayloadUsed != null ? testPayloadUsed : paramValue,
-                            reflCtx,
-                            payloadWasReflected,
-                            confScore
-                        );
+                        // Only create issues when we have actual confirmed XSS
+                        if (!payloadWasReflected && confScore <= 0.0) {
+                            callbacks.printOutput("[CheckReflection] Skipping issue creation: not confirmed and confidence=0 for: " + paramName);
+                            continue;
+                        }
 
-                        // If simplified method returns null, try enhanced method
-                        if (issue == null) {
-                            issue = issueReporter.createEnhancedXSSIssue(requestResponse, vulnerabilityData);
+                        // Try enhanced method first (proper validation + markers)
+                        issue = issueReporter.createEnhancedXSSIssue(requestResponse, vulnerabilityData);
+
+                        // Fallback to simplified method only for confirmed findings
+                        if (issue == null && payloadWasReflected) {
+                            issue = issueReporter.createXSSIssue(requestResponse, vulnerabilityData);
                         }
 
                         if (issue != null) {
@@ -1090,8 +1114,11 @@ public class CheckReflection {
             
             // Only process JSON if it's JSONP or has unsafe consumption indicators
             if (!isJSONP && !hasUnsafeIndicators) {
-                // Safe JSON with no exploitation indicators - skip or process with low confidence
-                // We'll still check but with lower confidence scoring
+                // Safe JSON — cannot have reflected XSS (data, not code)
+                if (settings != null && settings.getVerboseLogging()) {
+                    callbacks.printOutput("[CheckReflection] Safe JSON API response (no JSONP/unsafe indicators) - skipping XSS testing");
+                }
+                return reflectedParameters;
             }
         }
         
@@ -1292,8 +1319,11 @@ public class CheckReflection {
                     } else {
                         // Default confidence for JSON responses - but require reflection evidence
                         if (isJSONResponse) {
+                            parameterDescription.put("IS_JSON_RESPONSE", true);
+                            parameterDescription.put("CONTENT_TYPE", responseContentType);
                             // CRITICAL: Check for actual reflection before confirming
                             boolean hasReflectionEvidenceJSON = false;
+                            boolean isJSONExploitable = false;
                             if (iHttpRequestResponse != null && iHttpRequestResponse.getResponse() != null) {
                                 try {
                                     byte[] responseBytes = iHttpRequestResponse.getResponse();
@@ -1302,25 +1332,36 @@ public class CheckReflection {
                                         Arrays.copyOfRange(responseBytes, bodyOffset, responseBytes.length),
                                         StandardCharsets.UTF_8
                                     );
-                                    
+
                                     String paramValueStrJSON = parameter.getValue();
                                     if (paramValueStrJSON != null && !paramValueStrJSON.isEmpty()) {
                                         if (responseBody.contains(paramValueStrJSON) || responseBody.contains(helpers.urlEncode(paramValueStrJSON))) {
                                             hasReflectionEvidenceJSON = true;
                                         }
                                     }
+
+                                    // Check if JSON is actually exploitable (JSONP or unsafe consumption)
+                                    boolean isJSONP = isJSONPResponse(responseBody);
+                                    boolean hasUnsafe = hasUnsafeJSONConsumptionIndicators(responseBody);
+                                    isJSONExploitable = isJSONP || hasUnsafe;
                                 } catch (Exception e) {
                                     // Ignore errors
                                 }
                             }
-                            
-                            if (hasReflectionEvidenceJSON) {
+
+                            if (hasReflectionEvidenceJSON && isJSONExploitable) {
+                                // Exploitable JSON (JSONP or unsafe consumption) -- confirm
                                 parameterDescription.put("CONFIDENCE_SCORE", 85.0);
                                 parameterDescription.put("CALCULATED_SEVERITY", "High");
                                 parameterDescription.put("CONFIRMED_XSS", true);
+                            } else if (hasReflectionEvidenceJSON) {
+                                // Reflection in safe JSON.parse() context -- NOT exploitable
+                                parameterDescription.put("CONFIDENCE_SCORE", 25.0);
+                                parameterDescription.put("CALCULATED_SEVERITY", "Information");
+                                parameterDescription.put("CONFIRMED_XSS", false);
                             } else {
-                                parameterDescription.put("CONFIDENCE_SCORE", 50.0);
-                                parameterDescription.put("CALCULATED_SEVERITY", "Medium");
+                                parameterDescription.put("CONFIDENCE_SCORE", 25.0);
+                                parameterDescription.put("CALCULATED_SEVERITY", "Low");
                                 parameterDescription.put("CONFIRMED_XSS", false);
                             }
                         }
@@ -1576,10 +1617,10 @@ public class CheckReflection {
         // Get enabled content types from Settings
         ArrayList<String> enabledContentTypes = settings.getEnabledContentTypes();
         
-        // If no content types are enabled, default to text/html and application/json only
+        // If no content types are enabled, default to HTML/XHTML only (JSON is data, not code)
         if (enabledContentTypes == null || enabledContentTypes.isEmpty()) {
             String lowerContentType = contentType.toLowerCase();
-            return lowerContentType.contains("text/html") || lowerContentType.contains("application/json");
+            return lowerContentType.contains("text/html") || lowerContentType.contains("application/xhtml");
         }
         
         // Check if this content type is enabled
@@ -1605,8 +1646,10 @@ public class CheckReflection {
             return false;
         }
         
-        // JSONP pattern: functionName({...}) or functionName([...])
-        Pattern jsonpPattern = Pattern.compile("^\\s*[\\w$]+\\s*\\(\\s*[\\{\\[].*[\\}\\]]\\s*\\)\\s*;?\\s*$", Pattern.DOTALL);
+        // JSONP pattern: known callback names only (not any function call like console.log)
+        Pattern jsonpPattern = Pattern.compile(
+            "^\\s*(?:callback|jsonp|jsonpcallback|cb|jsoncallback|jQuery\\w+|__jp\\w*|angular\\.callbacks\\._\\w+)[\\w$]*\\s*\\(\\s*[\\{\\[].*[\\}\\]]\\s*\\)\\s*;?\\s*$",
+            Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
         return jsonpPattern.matcher(responseBody.trim()).find();
     }
     
@@ -1648,11 +1691,9 @@ public class CheckReflection {
             return true;
         }
         
-        // Check 5: Template injection patterns
-        if (responseBody.contains("{{") || responseBody.contains("${")) {
-            return true;
-        }
-        
+        // Check 5: Removed — {{ and ${ are too generic (match template literals, destructuring, etc.)
+        // Template injection detection is handled separately by EnhancedClientSideAttackDetector
+
         return false;
     }
     
@@ -1929,16 +1970,14 @@ public class CheckReflection {
                 }
             }
             
-            // Also check for XSS indicator combinations
-            for (String combo : Constants.XSS_INDICATOR_COMBINATIONS) {
-                if (responseBody.contains(combo)) {
-                    reflectedSymbols.add(combo);
-                }
+            // Only mark as symbol-reflected if actual dangerous symbols were found
+            // Without symbols, there's no XSS vector to exploit
+            if (!reflectedSymbols.isEmpty()) {
+                result.put("SYMBOLS_REFLECTED", true);
+            } else {
+                result.put("SYMBOLS_REFLECTED", false);
+                result.put("VALUE_REFLECTED", true); // Track that value was seen, but no dangerous symbols
             }
-            
-            // CRITICAL: Mark as reflected if original value is reflected (even without symbols)
-            // This ensures we test parameters that reflect user input
-            result.put("SYMBOLS_REFLECTED", true); // Original value is reflected
             result.put("REFLECTED_SYMBOLS", reflectedSymbols);
             
             // Determine reflection context based on WHERE the parameter is actually reflected
@@ -2461,13 +2500,42 @@ public class CheckReflection {
             } catch (Exception e) {
                 // Ignore decode errors
             }
-            
+
+            // Check for double URL-decoding (server decodes twice)
+            if (payload.contains("%25")) {
+                try {
+                    String singleDecoded = helpers.urlDecode(payload);
+                    if (singleDecoded != null && !singleDecoded.equals(payload) && responseBody.contains(singleDecoded)) {
+                        callbacks.printOutput("[CheckReflection] Double-decode detected: server decoded once");
+                        return true;
+                    }
+                    String doubleDecoded = helpers.urlDecode(singleDecoded);
+                    if (doubleDecoded != null && !doubleDecoded.equals(singleDecoded) && responseBody.contains(doubleDecoded)) {
+                        callbacks.printOutput("[CheckReflection] Double-decode detected: server decoded twice");
+                        return true;
+                    }
+                } catch (Exception ignored) {}
+            }
+
             // ADVANCED: Check for HTML entity encoded version (NOT exploitable)
             String htmlEncoded = payload.replace("<", "&lt;").replace(">", "&gt;")
                                        .replace("\"", "&quot;").replace("'", "&#39;");
             if (responseBody.contains(htmlEncoded) && !responseBody.contains(payload)) {
                 // HTML encoded is safe - not exploitable
                 return false;
+            }
+
+            // Check for numeric HTML entity encoded version (NOT exploitable)
+            String numericEncoded = payload.replace("<", "&#60;").replace(">", "&#62;")
+                                           .replace("\"", "&#34;").replace("'", "&#39;");
+            if (!numericEncoded.equals(payload) && responseBody.contains(numericEncoded) && !responseBody.contains(payload)) {
+                return false; // Numeric entity encoded = safe
+            }
+
+            // Check for JSON/Unicode encoded version (NOT exploitable in HTML context)
+            String unicodeEncoded = payload.replace("<", "\\u003c").replace(">", "\\u003e");
+            if (!unicodeEncoded.equals(payload) && responseBody.contains(unicodeEncoded) && !responseBody.contains(payload)) {
+                return false; // Unicode escaped = safe
             }
             
             // CRITICAL FIX: Do NOT use partial reflection - this causes false positives
@@ -2663,6 +2731,82 @@ public class CheckReflection {
                     callbacks.printOutput("[SafeContext] Payload in safe attribute '" + attrName + "' with proper quoting");
                     // Note: Not returning true here as attribute values can still be dangerous
                     // depending on context. Let other checks handle this.
+                }
+            }
+        }
+
+        // === CHECK 12: CSS STYLE CONTEXT ===
+        // Payload inside <style> block is not directly exploitable in modern browsers
+        // (expression() only worked in IE <= 7, no longer relevant)
+        int lastStyleOpen = contextBefore.toLowerCase().lastIndexOf("<style");
+        int lastStyleClose = contextBefore.toLowerCase().lastIndexOf("</style");
+        if (lastStyleOpen > lastStyleClose) {
+            int nextStyleClose = contextAfter.toLowerCase().indexOf("</style");
+            if (nextStyleClose >= 0) {
+                // Verify it's NOT a closing tag breakout (payload contains </style>)
+                if (!payload.toLowerCase().contains("</style")) {
+                    callbacks.printOutput("[SafeContext] FALSE POSITIVE: Payload in CSS <style> block - NOT exploitable");
+                    return true;
+                }
+            }
+        }
+
+        // === CHECK 13: NON-EXECUTABLE SCRIPT TYPES ===
+        // <script type="application/ld+json">, <script type="text/template">, etc.
+        // These script blocks are NOT executed by the browser
+        int lastScriptOpen = contextBefore.toLowerCase().lastIndexOf("<script");
+        if (lastScriptOpen >= 0) {
+            String scriptTag = contextBefore.substring(lastScriptOpen);
+            String lowerScriptTag = scriptTag.toLowerCase();
+            boolean isNonExec = lowerScriptTag.contains("type=\"application/ld+json") ||
+                lowerScriptTag.contains("type='application/ld+json") ||
+                lowerScriptTag.contains("type=\"application/json") ||
+                lowerScriptTag.contains("type='application/json") ||
+                lowerScriptTag.contains("type=\"text/template") ||
+                lowerScriptTag.contains("type='text/template") ||
+                lowerScriptTag.contains("type=\"text/x-template") ||
+                lowerScriptTag.contains("type='text/x-template") ||
+                lowerScriptTag.contains("type=\"text/x-handlebars") ||
+                lowerScriptTag.contains("type='text/x-handlebars") ||
+                lowerScriptTag.contains("type=\"text/html") ||
+                lowerScriptTag.contains("type='text/html") ||
+                lowerScriptTag.contains("type=\"text/plain") ||
+                lowerScriptTag.contains("type='text/plain");
+            if (isNonExec) {
+                int nextScriptClose = contextAfter.toLowerCase().indexOf("</script");
+                if (nextScriptClose >= 0) {
+                    // Verify the payload doesn't break out of the script tag
+                    if (!payload.toLowerCase().contains("</script")) {
+                        callbacks.printOutput("[SafeContext] FALSE POSITIVE: Payload in non-executable script type - NOT exploitable");
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // === CHECK 14: SVG ATTRIBUTE VALUE (non-event, non-URL) ===
+        // SVG attributes like d="...", viewBox="...", transform="..." are safe
+        // even with reflected content (they're geometry, not code)
+        String lowerBefore = contextBefore.toLowerCase();
+        if (lowerBefore.contains("<svg") || lowerBefore.contains("<path") ||
+            lowerBefore.contains("<rect") || lowerBefore.contains("<circle")) {
+            // Check if we're inside a safe SVG attribute
+            String svgAttrName = extractAttributeName(contextBefore);
+            if (svgAttrName != null) {
+                String lowerSvgAttr = svgAttrName.toLowerCase();
+                // Safe SVG geometry attributes
+                if (lowerSvgAttr.equals("d") || lowerSvgAttr.equals("viewbox") ||
+                    lowerSvgAttr.equals("transform") || lowerSvgAttr.equals("points") ||
+                    lowerSvgAttr.equals("x") || lowerSvgAttr.equals("y") ||
+                    lowerSvgAttr.equals("width") || lowerSvgAttr.equals("height") ||
+                    lowerSvgAttr.equals("fill") || lowerSvgAttr.equals("stroke") ||
+                    lowerSvgAttr.equals("class") || lowerSvgAttr.equals("style") ||
+                    lowerSvgAttr.equals("cx") || lowerSvgAttr.equals("cy") ||
+                    lowerSvgAttr.equals("r") || lowerSvgAttr.equals("rx") ||
+                    lowerSvgAttr.equals("ry") || lowerSvgAttr.equals("aria-hidden") ||
+                    lowerSvgAttr.equals("focusable") || lowerSvgAttr.equals("xmlns")) {
+                    callbacks.printOutput("[SafeContext] FALSE POSITIVE: Payload in safe SVG attribute '" + svgAttrName + "'");
+                    return true;
                 }
             }
         }

@@ -14,11 +14,19 @@ public class ModernArchitectureDetector {
     private final IBurpExtenderCallbacks callbacks;
     private final Settings settings;
     
-    // Modern architecture patterns
+    // Modern architecture patterns - Enhanced for 2025
     private static final String[] SPA_INDICATORS = {
         "ng-app", "ng-controller", "ng-", "data-ng-", "v-app", "v-", "@", "data-v-",
         "react", "reactjs", "vue", "vuejs", "angular", "angularjs", "svelte", "next.js",
-        "__webpack", "__NUXT__", "__NEXT_DATA__", "_app.js", "chunk.js", "vendor.js"
+        "__webpack", "__NUXT__", "__NEXT_DATA__", "_app.js", "chunk.js", "vendor.js",
+        // Modern framework indicators
+        "use client", "use server", "useState", "useEffect", "setup()", "<script setup>",
+        "$state", "$derived", "$effect", "createSignal", "useSignal", "component$",
+        "useLoaderData", "useActionData", "load(", "Astro.props", "defineProps",
+        // Build tool indicators
+        "vite", "turbopack", "swc", "esbuild", "rollup", "webpack", "parcel",
+        // Modern routing
+        "app/", "pages/", "routes/", "src/routes", "src/app", "src/pages"
     };
     
     private static final String[] PWA_INDICATORS = {
@@ -43,7 +51,10 @@ public class ModernArchitectureDetector {
     
     private static final String[] MODERN_JS_FRAMEWORKS = {
         "react", "vue", "angular", "svelte", "alpine", "lit", "stencil", "preact",
-        "solid", "qwik", "marko", "mithril", "ember", "backbone", "knockout"
+        "solid", "qwik", "marko", "mithril", "ember", "backbone", "knockout",
+        // Modern frameworks 2025
+        "remix", "astro", "sveltekit", "nuxt", "next", "gatsby", "redwood",
+        "blitz", "t3", "create-t3-app", "wasp", "refine", "medusa"
     };
     
     public ModernArchitectureDetector(IExtensionHelpers helpers, IBurpExtenderCallbacks callbacks, Settings settings) {
@@ -181,13 +192,99 @@ public class ModernArchitectureDetector {
         public void analyzeResponseBody(String body) {
             String lowerBody = body.toLowerCase();
             
-            // Framework detection
+            // Enhanced framework detection with modern patterns
             for (String framework : MODERN_JS_FRAMEWORKS) {
                 if (lowerBody.contains(framework)) {
                     detectedFrameworks.add(framework);
                     isSPA = true;
                     xssRiskScore += 10; // Client-side frameworks increase XSS risk
                 }
+            }
+            
+            // React 18+ detection
+            if (lowerBody.contains("use client") || lowerBody.contains("use server") ||
+                lowerBody.contains("react-dom/client") || lowerBody.contains("react-dom/server") ||
+                lowerBody.contains("useTransition") || lowerBody.contains("useDeferredValue") ||
+                lowerBody.contains("useActionState") || lowerBody.contains("useFormState") ||
+                lowerBody.contains("createRoot") || lowerBody.contains("hydrateRoot")) {
+                detectedFrameworks.add("React 18+");
+                isSPA = true;
+                xssRiskScore += 15;
+            }
+            
+            // Vue 3 Composition API detection
+            if (lowerBody.contains("<script setup>") || lowerBody.contains("defineProps") ||
+                lowerBody.contains("defineEmits") || lowerBody.contains("defineModel") ||
+                lowerBody.contains("setup()") || lowerBody.contains("vue@3") ||
+                lowerBody.contains("vue@latest") || lowerBody.contains("createApp")) {
+                detectedFrameworks.add("Vue 3");
+                isSPA = true;
+                xssRiskScore += 15;
+            }
+            
+            // Next.js 13+ App Router detection
+            if (lowerBody.contains("__NEXT_DATA__") && (lowerBody.contains("app/") || 
+                lowerBody.contains("useSearchParams") || lowerBody.contains("usePathname"))) {
+                detectedFrameworks.add("Next.js 13+");
+                isSPA = true;
+                xssRiskScore += 15;
+            }
+            
+            // Svelte 5 runes detection
+            if (lowerBody.contains("$state") || lowerBody.contains("$derived") ||
+                lowerBody.contains("$effect") || lowerBody.contains("$props") ||
+                lowerBody.contains("svelte/runes") || lowerBody.contains("svelte5")) {
+                detectedFrameworks.add("Svelte 5");
+                isSPA = true;
+                xssRiskScore += 15;
+            }
+            
+            // Solid.js detection
+            if (lowerBody.contains("solid-js") || lowerBody.contains("createSignal") ||
+                lowerBody.contains("createEffect") || lowerBody.contains("solid-router")) {
+                detectedFrameworks.add("Solid.js");
+                isSPA = true;
+                xssRiskScore += 15;
+            }
+            
+            // Qwik detection
+            if (lowerBody.contains("@builder.io/qwik") || lowerBody.contains("useSignal") ||
+                lowerBody.contains("component$") || lowerBody.contains("qwik-city")) {
+                detectedFrameworks.add("Qwik");
+                isSPA = true;
+                xssRiskScore += 15;
+            }
+            
+            // Remix detection
+            if (lowerBody.contains("@remix-run") || lowerBody.contains("useLoaderData") ||
+                lowerBody.contains("useActionData") || lowerBody.contains("useFetcher")) {
+                detectedFrameworks.add("Remix");
+                isSPA = true;
+                xssRiskScore += 15;
+            }
+            
+            // Astro detection
+            if (lowerBody.contains("astro") || lowerBody.contains("Astro.props") ||
+                lowerBody.contains("Astro.params") || lowerBody.contains("@astrojs")) {
+                detectedFrameworks.add("Astro");
+                isSPA = true;
+                xssRiskScore += 10;
+            }
+            
+            // SvelteKit detection
+            if (lowerBody.contains("@sveltejs/kit") || lowerBody.contains("sveltekit") ||
+                lowerBody.contains("$app") || lowerBody.contains("load(")) {
+                detectedFrameworks.add("SvelteKit");
+                isSPA = true;
+                xssRiskScore += 15;
+            }
+            
+            // Modern state management detection
+            if (lowerBody.contains("zustand") || lowerBody.contains("jotai") ||
+                lowerBody.contains("valtio") || lowerBody.contains("pinia") ||
+                lowerBody.contains("@tanstack/query") || lowerBody.contains("react-query")) {
+                detectedTechnologies.add("Modern State Management");
+                xssRiskScore += 5;
             }
             
             // SPA detection

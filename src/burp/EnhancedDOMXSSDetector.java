@@ -16,22 +16,64 @@ public class EnhancedDOMXSSDetector {
     private final IBurpExtenderCallbacks callbacks;
     private final Settings settings;
     
-    // Advanced DOM sources for real exploitation
+    // ENHANCED: Comprehensive DOM sources including modern SPA-specific sources (2025)
     private static final String[] DOM_SOURCES = {
         "location.href", "location.search", "location.hash", "location.pathname", "location.protocol",
         "document.referrer", "window.name", "document.cookie", "localStorage", "sessionStorage",
         "postMessage", "URLSearchParams", "document.URL", "document.documentURI", "document.baseURI",
         "window.location", "history.state", "navigator.userAgent", "screen.width", "screen.height",
         "innerHTML", "outerHTML", "textContent", "innerText", "document.title", "document.domain",
+        // React Router v6+ sources
+        "route.params", "route.query", "route.queryParams", "match.params", "router.query",
+        "useParams", "useSearchParams", "useLocation", "useNavigate", "useLoaderData",
+        "useActionData", "useFetcher", "useNavigation", "useMatches", "useOutlet",
+        "useOutletContext", "useRouteLoaderData", "useRevalidator", "useResolvedPath",
+        // Vue Router 4+ sources
+        "$route.params", "$route.query", "this.$route.params", "this.$route.query",
+        "useRoute", "useRouter", "useLink", "route.params", "route.query",
+        // Angular Router sources
+        "ActivatedRoute", "route.snapshot", "route.paramMap", "route.queryParamMap",
+        "route.data", "route.fragment", "ActivatedRouteSnapshot", "RouterStateSnapshot",
+        // Next.js App Router sources
+        "useSearchParams", "usePathname", "useParams", "useRouter", "useSelectedLayoutSegment",
+        "useSelectedLayoutSegments", "searchParams", "params", "headers", "cookies",
+        // Nuxt 3 sources
+        "useState", "useFetch", "useAsyncData", "useLazyFetch", "useLazyAsyncData",
+        "useCookie", "useRequestHeaders", "useRequestURL", "useRequestEvent",
+        // SvelteKit sources
+        "load(", "page", "params", "data", "form", "error", "$app", "$app/stores",
+        // Remix sources
+        "useLoaderData", "useActionData", "useFetcher", "useNavigation", "useSubmit",
+        "useFormAction", "useMatches", "useOutlet", "useOutletContext", "useRouteLoaderData",
+        // Solid.js sources
+        "useNavigate", "useParams", "useSearchParams", "useLocation", "useMatch",
+        "useResolvedPath", "useHref", "useIsRouting",
+        // Qwik sources
+        "useLocation", "useNavigate", "useRouteLoader$", "useEndpoint$", "routeLoader$",
+        "routeAction$", "server$", "route$",
+        // Astro sources
+        "Astro.props", "Astro.params", "Astro.request", "Astro.url", "Astro.cookies",
+        // History API
+        "history.pushState", "history.replaceState", "history.state", "window.history",
+        // STATE MANAGEMENT SOURCES (Modern)
+        "store.getState", "store.dispatch", "this.props", "this.state", "props", "state",
+        "useState", "useReducer", "useContext", "getState", "dispatch", "commit",
+        // Zustand, Jotai, Valtio, Pinia
+        "useStore", "useAtom", "useAtomValue", "useSetAtom", "useAtomStore",
+        "defineStore", "storeToRefs", "createPinia", "mapStores", "mapState",
+        // TanStack Query (React Query)
+        "useQuery", "useMutation", "useInfiniteQuery", "useQueries", "useQueryClient",
         // REAL-TIME DYNAMIC SOURCES
         "MutationObserver", "ResizeObserver", "IntersectionObserver", "PerformanceObserver",
         "WebSocket", "EventSource", "Server-Sent Events", "ServiceWorker", "WebWorker",
         "BroadcastChannel", "SharedArrayBuffer", "Dynamic Import", "WebAssembly",
         "requestAnimationFrame", "setInterval", "setTimeout", "Promise.resolve",
-        "fetch", "XMLHttpRequest", "axios", "jQuery.ajax", "fetch API"
+        "fetch", "XMLHttpRequest", "axios", "jQuery.ajax", "fetch API",
+        // EVENT SOURCES
+        "event.data", "message.data", "e.data", "event.target", "event.currentTarget"
     };
     
-    // Advanced DOM sinks for real exploitation
+    // Advanced DOM sinks for real exploitation - Enhanced for modern frameworks (2025)
     private static final String[] DOM_SINKS = {
         "innerHTML", "outerHTML", "document.write", "document.writeln", "eval", "Function",
         "setTimeout", "setInterval", "execScript", "insertAdjacentHTML", "setAttribute",
@@ -39,33 +81,182 @@ public class EnhancedDOMXSSDetector {
         "document.createElement", "document.createTextNode", "document.createDocumentFragment",
         "jQuery.html", "jQuery.append", "jQuery.prepend", "jQuery.after", "jQuery.before",
         "ReactDOM.render", "Vue.set", "Angular.element", "DOMPurify.sanitize",
+        // React modern sinks
+        "dangerouslySetInnerHTML", "React.createElement", "createRoot", "hydrateRoot",
+        "ReactDOM.createRoot", "ReactDOM.hydrateRoot", "renderToStaticMarkup",
+        "renderToString", "renderToPipeableStream", "renderToReadableStream",
+        // Vue 3 modern sinks
+        "v-html", "Vue.createApp", "createSSRApp", "renderToString", "renderToNodeStream",
+        "renderToWebStream", "defineComponent", "h(", "createVNode", "createTextVNode",
+        // Angular modern sinks
+        "[innerHTML]", "innerHTML", "DomSanitizer", "bypassSecurityTrustHtml",
+        "bypassSecurityTrustScript", "bypassSecurityTrustUrl", "bypassSecurityTrustResourceUrl",
+        "bypassSecurityTrustStyle", "ElementRef", "Renderer2", "Renderer",
+        // Svelte modern sinks
+        "@html", "{@html", "svelte:component", "svelte:element", "svelte:window",
+        "svelte:body", "svelte:head", "svelte:options", "svelte:fragment",
+        // Next.js sinks
+        "set:html", "set:text", "is:inline", "is:global", "define:vars",
+        // Astro sinks
+        "set:html", "set:text", "is:inline", "is:global", "define:vars",
         // REAL-TIME DYNAMIC SINKS
         "MutationObserver.observe", "ResizeObserver.observe", "IntersectionObserver.observe",
         "WebSocket.send", "EventSource.onmessage", "postMessage", "BroadcastChannel.postMessage",
         "ServiceWorker.postMessage", "WebWorker.postMessage", "SharedArrayBuffer",
         "Dynamic Import", "WebAssembly.instantiate", "requestAnimationFrame",
         "Promise.then", "async/await", "Generator functions", "Proxy objects",
-        "Reflect API", "Object.defineProperty", "Object.setPrototypeOf"
+        "Reflect API", "Object.defineProperty", "Object.setPrototypeOf",
+        // Modern browser APIs
+        "TrustedHTML", "TrustedScript", "TrustedScriptURL", "TrustedTypes",
+        "sanitize", "sanitizeFor", "createPolicy", "defaultPolicy",
+        // Template literal sinks
+        "String.raw", "template literals", "tagged templates", "`${",
+        // Modern state management sinks
+        "store.setState", "store.update", "dispatch", "commit", "mutate",
+        "setState", "updateState", "set", "update", "write", "setValue"
     };
     
-    // Framework-specific patterns for real exploitation
+    // ENHANCED: Comprehensive framework-specific patterns for modern SPA detection
     private static final Map<String, String[]> FRAMEWORK_PATTERNS = new HashMap<>();
     static {
+        // React 18+ with Server Components, Suspense, and modern hooks
         FRAMEWORK_PATTERNS.put("React", new String[]{
             "ReactDOM.render", "dangerouslySetInnerHTML", "React.createElement", "JSX",
-            "useState", "useEffect", "useContext", "useReducer", "useCallback", "useMemo"
+            "useState", "useEffect", "useContext", "useReducer", "useCallback", "useMemo",
+            "React.createElement", "React.Component", "createElement", "render(", "ReactDOM",
+            "react-router", "react-router-dom", "BrowserRouter", "Route", "Link", "NavLink",
+            "useParams", "useSearchParams", "useLocation", "useNavigate", "match.params",
+            // React 18+ features
+            "useTransition", "useDeferredValue", "useId", "useSyncExternalStore", "useInsertionEffect",
+            "useActionState", "useFormState", "useOptimistic", "useFormStatus", "use",
+            "Suspense", "lazy", "React.Suspense", "React.lazy", "startTransition",
+            "Server Components", "use server", "use client", "async function Component",
+            "createRoot", "hydrateRoot", "ReactDOM.createRoot", "ReactDOM.hydrateRoot",
+            "useFormState", "useActionState", "useOptimistic", "useFormStatus",
+            // React Router v6+
+            "useLoaderData", "useActionData", "useFetcher", "useNavigation", "useRevalidator",
+            "useRouteLoaderData", "useMatches", "useOutlet", "useOutletContext", "useResolvedPath"
         });
+        // Vue 3 Composition API with <script setup> and modern patterns
         FRAMEWORK_PATTERNS.put("Vue", new String[]{
             "Vue.set", "v-html", "v-text", "v-bind", "v-on", "Vue.component", "Vue.directive",
-            "$refs", "$emit", "$nextTick", "computed", "watch", "methods"
+            "$refs", "$emit", "$nextTick", "computed", "watch", "methods", "Vue.createApp",
+            "vue-router", "router-link", "router-view", "$route", "$router", "useRoute", "useRouter",
+            "this.$route.params", "this.$route.query", "route.params", "route.query",
+            // Vue 3 Composition API
+            "setup()", "<script setup>", "defineProps", "defineEmits", "defineExpose", "defineOptions",
+            "defineModel", "defineSlots", "withDefaults", "useSlots", "useAttrs",
+            "ref", "reactive", "readonly", "computed", "watch", "watchEffect", "watchPostEffect",
+            "watchSyncEffect", "onMounted", "onUnmounted", "onBeforeMount", "onBeforeUnmount",
+            "onUpdated", "onBeforeUpdate", "onActivated", "onDeactivated", "onErrorCaptured",
+            "onRenderTracked", "onRenderTriggered", "provide", "inject", "getCurrentInstance",
+            // Vue Router 4+
+            "useRouter", "useRoute", "useLink", "onBeforeRouteLeave", "onBeforeRouteUpdate",
+            // Pinia (Vue 3 state management)
+            "defineStore", "storeToRefs", "useStore", "createPinia", "mapStores", "mapState",
+            "mapGetters", "mapActions", "mapWritableState"
         });
+        // Angular with modern patterns
         FRAMEWORK_PATTERNS.put("Angular", new String[]{
             "Angular.element", "ng-bind-html", "ng-bind", "interpolation", "{{}}", "[]",
-            "Angular.module", "Angular.controller", "Angular.directive", "Angular.service"
+            "Angular.module", "Angular.controller", "Angular.directive", "Angular.service",
+            "@angular/router", "RouterModule", "ActivatedRoute", "routerLink", "router-outlet",
+            "route.params", "route.snapshot.params", "route.queryParams", "ActivatedRoute",
+            // Angular modern patterns
+            "@Component", "@Injectable", "@Directive", "@Pipe", "@NgModule", "@Input", "@Output",
+            "inject(", "injector", "injector.get", "injector.resolveAndCreate",
+            "ActivatedRouteSnapshot", "RouterStateSnapshot", "ParamMap", "QueryParamMap",
+            "route.paramMap", "route.queryParamMap", "route.data", "route.fragment"
         });
         FRAMEWORK_PATTERNS.put("jQuery", new String[]{
             "jQuery.html", "jQuery.append", "jQuery.prepend", "jQuery.after", "jQuery.before",
-            "jQuery.replaceWith", "jQuery.wrap", "jQuery.unwrap", "jQuery.empty", "jQuery.remove"
+            "jQuery.replaceWith", "jQuery.wrap", "jQuery.unwrap", "jQuery.empty", "jQuery.remove",
+            "$.html", "$.append", "$.prepend", "$.after", "$.before", "$.replaceWith"
+        });
+        // Svelte 5 with runes ($state, $derived, $effect)
+        FRAMEWORK_PATTERNS.put("Svelte", new String[]{
+            "svelte", "SvelteComponent", "@html", "bind:", "on:", "svelte/store",
+            "writable", "readable", "derived", "get", "set", "update",
+            // Svelte 5 runes
+            "$state", "$derived", "$effect", "$props", "$derived.by", "$derived.run",
+            "$state.snapshot", "$state.raw", "$state.frozen", "$state.raw.frozen",
+            "runes", "svelte 5", "svelte5", "svelte/runes",
+            // SvelteKit
+            "sveltekit", "$app", "$app/stores", "$app/paths", "$app/environment",
+            "load(", "page", "params", "data", "form", "error", "redirect", "fail"
+        });
+        // Next.js 13+ App Router
+        FRAMEWORK_PATTERNS.put("Next.js", new String[]{
+            "__NEXT_DATA__", "next/router", "useRouter", "router.query", "router.asPath",
+            "getServerSideProps", "getStaticProps", "getInitialProps",
+            // Next.js 13+ App Router
+            "useSearchParams", "usePathname", "useParams", "useRouter", "useSelectedLayoutSegment",
+            "useSelectedLayoutSegments", "useServerInsertedHTML", "use client", "use server",
+            "app/", "app/layout", "app/page", "app/route", "app/loading", "app/error",
+            "app/not-found", "app/global-error", "app/template", "app/default",
+            "generateStaticParams", "generateMetadata", "generateViewport", "dynamicParams",
+            "revalidate", "fetch", "cookies", "headers", "redirect", "notFound",
+            "Route Handlers", "route.ts", "route.js", "route.tsx", "route.jsx",
+            "next/navigation", "next/link", "next/image", "next/font", "next/script"
+        });
+        // Nuxt 3
+        FRAMEWORK_PATTERNS.put("Nuxt", new String[]{
+            "__NUXT__", "nuxt", "$nuxt", "$router", "$route", "nuxt-link", "nuxt-child",
+            // Nuxt 3
+            "useNuxtApp", "useRuntimeConfig", "useState", "useFetch", "useAsyncData",
+            "useLazyFetch", "useLazyAsyncData", "useCookie", "useRequestHeaders",
+            "useRequestURL", "useRequestEvent", "navigateTo", "useRouter", "useRoute",
+            "definePageMeta", "defineNuxtComponent", "defineNuxtPlugin", "defineNuxtRouteMiddleware",
+            "useHead", "useSeoMeta", "useServerSeoMeta", "composables", "utils",
+            "pages/", "components/", "layouts/", "middleware/", "plugins/", "composables/",
+            "server/api/", "server/middleware/", "server/routes/", "server/utils/"
+        });
+        // Solid.js
+        FRAMEWORK_PATTERNS.put("Solid", new String[]{
+            "solid-js", "solid", "createSignal", "createEffect", "createMemo", "createResource",
+            "createStore", "createContext", "useContext", "For", "Show", "Switch", "Match",
+            "Index", "Dynamic", "Portal", "ErrorBoundary", "Suspense", "SuspenseList",
+            "lazy", "createComponent", "mergeProps", "splitProps", "onMount", "onCleanup",
+            "onError", "untrack", "batch", "createRoot", "createRenderEffect", "createComputed",
+            "solid-router", "useNavigate", "useParams", "useSearchParams", "useLocation",
+            "useMatch", "useResolvedPath", "useHref", "useIsRouting", "A", "Link", "NavLink"
+        });
+        // Qwik
+        FRAMEWORK_PATTERNS.put("Qwik", new String[]{
+            "@builder.io/qwik", "qwik", "useSignal", "useTask", "useVisibleTask", "useStore",
+            "useContext", "useResource", "useComputed$", "useStyles$", "useStylesScoped$",
+            "useClientEffect$", "useServerMount$", "useDocumentReady$", "useVisible$",
+            "component$", "slot", "Fragment", "useLexicalScope", "useRef", "useId",
+            "qwik-city", "useLocation", "useNavigate", "useRouteLoader$", "useEndpoint$",
+            "routeLoader$", "routeAction$", "server$", "route$", "Link", "useDocumentHead"
+        });
+        // Remix
+        FRAMEWORK_PATTERNS.put("Remix", new String[]{
+            "@remix-run", "remix", "useLoaderData", "useActionData", "useFetcher", "useNavigation",
+            "useSubmit", "useFormAction", "useMatches", "useOutlet", "useOutletContext",
+            "useParams", "useSearchParams", "useLocation", "useNavigate", "useRevalidator",
+            "useRouteLoaderData", "useRouteError", "useHref", "useResolvedPath", "useMatch",
+            "Form", "Link", "NavLink", "Outlet", "Scripts", "Meta", "Links", "json",
+            "redirect", "defer", "createCookie", "createCookieSessionStorage", "createSessionStorage"
+        });
+        // Astro
+        FRAMEWORK_PATTERNS.put("Astro", new String[]{
+            "astro", "@astrojs", "Astro.props", "Astro.params", "Astro.request", "Astro.url",
+            "Astro.cookies", "Astro.redirect", "Astro.canonicalURL", "Astro.site",
+            "getStaticPaths", "getServerSideProps", "defineConfig", "defineCollection",
+            "getCollection", "getEntry", "getEntries", "render", "Fragment", "Script",
+            "set:html", "set:text", "is:inline", "is:global", "client:load", "client:idle",
+            "client:visible", "client:media", "client:only", "define:vars", "define:vars"
+        });
+        // SvelteKit
+        FRAMEWORK_PATTERNS.put("SvelteKit", new String[]{
+            "@sveltejs/kit", "sveltekit", "$app", "$app/stores", "$app/paths", "$app/environment",
+            "load(", "page", "params", "data", "form", "error", "redirect", "fail",
+            "invalidate", "invalidateAll", "depends", "parent", "setHeaders", "setCookie",
+            "deleteCookie", "getRequestEvent", "isDataRequest", "isPrerendered",
+            "+page", "+page.server", "+page.client", "+layout", "+layout.server", "+layout.client",
+            "+error", "+error.svelte", "+server", "+server.js", "+server.ts", "hooks.server",
+            "hooks.client", "hooks.shared", "endpoints", "routes", "matchers"
         });
     }
     
@@ -185,10 +376,27 @@ public class EnhancedDOMXSSDetector {
      */
     public DOMXSSResult analyzeDOMXSS(IHttpRequestResponse requestResponse) {
         DOMXSSResult result = new DOMXSSResult();
-        
+
         try {
             // Extract response body
             byte[] response = requestResponse.getResponse();
+
+            // Skip non-HTML responses — DOM XSS only applies to rendered HTML
+            try {
+                IResponseInfo respInfo = helpers.analyzeResponse(response);
+                for (String header : respInfo.getHeaders()) {
+                    if (header.toLowerCase().startsWith("content-type:")) {
+                        String ct = header.substring(header.indexOf(":") + 1).trim().toLowerCase();
+                        if (ct.contains("application/json") || ct.contains("application/graphql") ||
+                            ct.contains("image/") || ct.contains("font/") ||
+                            ct.contains("application/octet-stream") || ct.contains("application/pdf")) {
+                            return result; // Not HTML — no DOM XSS possible
+                        }
+                        break;
+                    }
+                }
+            } catch (Exception ignored) {}
+
             int bodyOffset = helpers.analyzeResponse(response).getBodyOffset();
             String responseBody = new String(Arrays.copyOfRange(response, bodyOffset, response.length), StandardCharsets.UTF_8);
             
@@ -243,8 +451,54 @@ public class EnhancedDOMXSSDetector {
         int vulnerabilityScore = calculateVulnerabilityScore(detectedSources, detectedSinks, dataFlows, realTimeAnalysis);
         result.setVulnerabilityScore(vulnerabilityScore);
         
-        // Determine if vulnerable - Enhanced with real-time detection
-        boolean isVulnerable = vulnerabilityScore >= 50 && (!dataFlows.isEmpty() || !detectedSources.isEmpty() || realTimeAnalysis.hasRealTimeVectors());
+        // CRITICAL FIX: Determine if vulnerable - Require STRONG evidence
+        // Must have actual data flows (source-sink correlation) OR high-confidence real-time vectors
+        // Just having sources/sinks without correlation is NOT enough (prevents false positives)
+        boolean hasActualDataFlows = !dataFlows.isEmpty();
+        boolean hasHighConfidenceRealTime = realTimeAnalysis.hasRealTimeVectors() && 
+            (realTimeAnalysis.isHasWebSocket() || realTimeAnalysis.isHasMutationObserver() || 
+             realTimeAnalysis.isHasServiceWorker() || realTimeAnalysis.isHasDynamicImport() ||
+             realTimeAnalysis.isHasWebAssembly());
+        boolean hasHighRiskSourcesAndSinks = !detectedSources.isEmpty() && !detectedSinks.isEmpty() && 
+            vulnerabilityScore >= 70; // High score indicates strong correlation
+        
+        // CRITICAL: Only mark as vulnerable if we have STRONG evidence AND actual exploitable data flows
+        // Require actual data flows with user-controlled sources flowing into dangerous sinks
+        boolean hasExploitableDataFlows = false;
+        if (!dataFlows.isEmpty()) {
+            for (DataFlow flow : dataFlows) {
+                if (flow != null && flow.getSource() != null && flow.getSink() != null) {
+                    String sourceName = flow.getSource().getName().toLowerCase();
+                    String sinkName = flow.getSink().getName().toLowerCase();
+                    
+                    // Check if source is user-controlled
+                    boolean isUserControlled = sourceName.contains("location.hash") ||
+                                            sourceName.contains("location.search") ||
+                                            sourceName.contains("location.href") ||
+                                            sourceName.contains("document.referrer") ||
+                                            sourceName.contains("window.name") ||
+                                            sourceName.contains("urlsearchparams");
+                    
+                    // Check if sink is dangerous
+                    boolean isDangerousSink = sinkName.contains("eval") || 
+                                            sinkName.contains("innerhtml") || 
+                                            sinkName.contains("outerhtml") ||
+                                            sinkName.contains("document.write") ||
+                                            (sinkName.contains("function") && 
+                                             flow.getSink().getContext() != null && 
+                                             flow.getSink().getContext().toLowerCase().contains("eval"));
+                    
+                    if (isUserControlled && isDangerousSink) {
+                        hasExploitableDataFlows = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Only mark as vulnerable if we have STRONG evidence AND exploitable data flows
+        boolean isVulnerable = vulnerabilityScore >= 60 && 
+            (hasExploitableDataFlows || hasHighConfidenceRealTime);
         result.setVulnerable(isVulnerable);
         
         // Set confidence and risk level
@@ -263,27 +517,50 @@ public class EnhancedDOMXSSDetector {
     }
     
     /**
-     * REAL-TIME DYNAMIC DOM ANALYSIS
+     * REAL-TIME DYNAMIC DOM ANALYSIS - ENHANCED WITH ADVANCED PATTERN MATCHING
      * Detects live DOM changes, dynamic content updates, and real-time exploitation vectors
+     * Uses context-aware regex patterns for accurate detection
      */
     private RealTimeDynamicAnalysis performRealTimeDynamicAnalysis(String html, IHttpRequestResponse requestResponse) {
         RealTimeDynamicAnalysis analysis = new RealTimeDynamicAnalysis();
         String htmlLower = html.toLowerCase();
         
-        // MUTATION OBSERVER DETECTION
-        if (htmlLower.contains("mutationobserver") || htmlLower.contains("mutation observer")) {
-            analysis.setHasMutationObserver(true);
-            analysis.setMutationObserverRisk("HIGH");
-            analysis.getRealTimeVectors().add("MutationObserver");
-            callbacks.printOutput("[REALTIME] MutationObserver detected - Real-time DOM monitoring possible");
+        // MUTATION OBSERVER DETECTION - Enhanced with regex patterns
+        Pattern mutationObserverPattern = Pattern.compile(
+            "(?:new\\s+)?MutationObserver\\s*\\(|MutationObserver\\.observe|mutationobserver|mutation\\s+observer",
+            Pattern.CASE_INSENSITIVE | Pattern.MULTILINE
+        );
+        if (mutationObserverPattern.matcher(html).find()) {
+            // Check for actual usage (not just mention)
+            Pattern usagePattern = Pattern.compile(
+                "MutationObserver\\s*\\([^)]*\\)|MutationObserver\\.observe\\s*\\(|new\\s+MutationObserver",
+                Pattern.CASE_INSENSITIVE
+            );
+            if (usagePattern.matcher(html).find()) {
+                analysis.setHasMutationObserver(true);
+                analysis.setMutationObserverRisk("HIGH");
+                analysis.getRealTimeVectors().add("MutationObserver");
+                callbacks.printOutput("[REALTIME] MutationObserver detected with actual usage - Real-time DOM monitoring active");
+            }
         }
         
-        // WEBSOCKET DETECTION
-        if (htmlLower.contains("websocket") || htmlLower.contains("ws://") || htmlLower.contains("wss://")) {
-            analysis.setHasWebSocket(true);
-            analysis.setWebSocketRisk("HIGH");
-            analysis.getRealTimeVectors().add("WebSocket");
-            callbacks.printOutput("[REALTIME] WebSocket detected - Real-time communication possible");
+        // WEBSOCKET DETECTION - Enhanced with regex patterns
+        Pattern webSocketPattern = Pattern.compile(
+            "(?:new\\s+)?WebSocket\\s*\\(|websocket|ws://|wss://|socket\\.io",
+            Pattern.CASE_INSENSITIVE
+        );
+        if (webSocketPattern.matcher(html).find()) {
+            // Check for actual WebSocket instantiation
+            Pattern wsUsagePattern = Pattern.compile(
+                "new\\s+WebSocket\\s*\\(|WebSocket\\s*\\(|socket\\.io\\(|io\\.connect",
+                Pattern.CASE_INSENSITIVE
+            );
+            if (wsUsagePattern.matcher(html).find()) {
+                analysis.setHasWebSocket(true);
+                analysis.setWebSocketRisk("HIGH");
+                analysis.getRealTimeVectors().add("WebSocket");
+                callbacks.printOutput("[REALTIME] WebSocket detected with actual usage - Real-time communication active");
+            }
         }
         
         // EVENT SOURCE DETECTION
@@ -294,52 +571,118 @@ public class EnhancedDOMXSSDetector {
             callbacks.printOutput("[REALTIME] EventSource detected - Server-sent events possible");
         }
         
-        // SERVICE WORKER DETECTION
-        if (htmlLower.contains("serviceworker") || htmlLower.contains("service worker") || htmlLower.contains("navigator.serviceworker")) {
-            analysis.setHasServiceWorker(true);
-            analysis.setServiceWorkerRisk("HIGH");
-            analysis.getRealTimeVectors().add("ServiceWorker");
-            callbacks.printOutput("[REALTIME] ServiceWorker detected - Background processing possible");
+        // SERVICE WORKER DETECTION - Enhanced with regex patterns
+        Pattern serviceWorkerPattern = Pattern.compile(
+            "navigator\\.serviceWorker|serviceWorker\\.register|service\\s*worker|serviceworker",
+            Pattern.CASE_INSENSITIVE
+        );
+        if (serviceWorkerPattern.matcher(html).find()) {
+            // Check for actual registration
+            Pattern swRegisterPattern = Pattern.compile(
+                "serviceWorker\\.register\\s*\\(|navigator\\.serviceWorker\\.register",
+                Pattern.CASE_INSENSITIVE
+            );
+            if (swRegisterPattern.matcher(html).find()) {
+                analysis.setHasServiceWorker(true);
+                analysis.setServiceWorkerRisk("HIGH");
+                analysis.getRealTimeVectors().add("ServiceWorker");
+                callbacks.printOutput("[REALTIME] ServiceWorker detected with registration - Background processing active");
+            }
         }
         
-        // WEB WORKER DETECTION
-        if (htmlLower.contains("webworker") || htmlLower.contains("web worker") || htmlLower.contains("new worker")) {
-            analysis.setHasWebWorker(true);
-            analysis.setWebWorkerRisk("MEDIUM");
-            analysis.getRealTimeVectors().add("WebWorker");
-            callbacks.printOutput("[REALTIME] WebWorker detected - Background threading possible");
+        // WEB WORKER DETECTION - Enhanced with regex patterns
+        Pattern webWorkerPattern = Pattern.compile(
+            "(?:new\\s+)?(?:Worker|SharedWorker|WebWorker)\\s*\\(|web\\s*worker|webworker",
+            Pattern.CASE_INSENSITIVE
+        );
+        if (webWorkerPattern.matcher(html).find()) {
+            // Check for actual worker instantiation
+            Pattern workerUsagePattern = Pattern.compile(
+                "new\\s+(?:Worker|SharedWorker)\\s*\\(|Worker\\s*\\(|SharedWorker\\s*\\(",
+                Pattern.CASE_INSENSITIVE
+            );
+            if (workerUsagePattern.matcher(html).find()) {
+                analysis.setHasWebWorker(true);
+                analysis.setWebWorkerRisk("MEDIUM");
+                analysis.getRealTimeVectors().add("WebWorker");
+                callbacks.printOutput("[REALTIME] WebWorker detected with instantiation - Background threading active");
+            }
         }
         
-        // BROADCAST CHANNEL DETECTION
-        if (htmlLower.contains("broadcastchannel") || htmlLower.contains("broadcast channel")) {
-            analysis.setHasBroadcastChannel(true);
-            analysis.setBroadcastChannelRisk("MEDIUM");
-            analysis.getRealTimeVectors().add("BroadcastChannel");
-            callbacks.printOutput("[REALTIME] BroadcastChannel detected - Cross-tab communication possible");
+        // BROADCAST CHANNEL DETECTION - Enhanced with regex patterns
+        Pattern broadcastChannelPattern = Pattern.compile(
+            "(?:new\\s+)?BroadcastChannel\\s*\\(|broadcastchannel|broadcast\\s*channel",
+            Pattern.CASE_INSENSITIVE
+        );
+        if (broadcastChannelPattern.matcher(html).find()) {
+            // Check for actual usage
+            Pattern bcUsagePattern = Pattern.compile(
+                "new\\s+BroadcastChannel\\s*\\(|BroadcastChannel\\s*\\(|broadcastChannel\\.postMessage",
+                Pattern.CASE_INSENSITIVE
+            );
+            if (bcUsagePattern.matcher(html).find()) {
+                analysis.setHasBroadcastChannel(true);
+                analysis.setBroadcastChannelRisk("MEDIUM");
+                analysis.getRealTimeVectors().add("BroadcastChannel");
+                callbacks.printOutput("[REALTIME] BroadcastChannel detected with usage - Cross-tab communication active");
+            }
         }
         
-        // DYNAMIC IMPORT DETECTION
-        if (htmlLower.contains("import(") || htmlLower.contains("dynamic import")) {
-            analysis.setHasDynamicImport(true);
-            analysis.setDynamicImportRisk("HIGH");
-            analysis.getRealTimeVectors().add("DynamicImport");
-            callbacks.printOutput("[REALTIME] Dynamic Import detected - Runtime module loading possible");
+        // DYNAMIC IMPORT DETECTION - Enhanced with regex patterns
+        Pattern dynamicImportPattern = Pattern.compile(
+            "import\\s*\\(|dynamic\\s+import|import\\.meta",
+            Pattern.CASE_INSENSITIVE
+        );
+        if (dynamicImportPattern.matcher(html).find()) {
+            // Check for actual dynamic import usage (not static import)
+            Pattern diUsagePattern = Pattern.compile(
+                "import\\s*\\([^)]+\\)|import\\.meta\\.url|import\\.meta\\.resolve",
+                Pattern.CASE_INSENSITIVE
+            );
+            if (diUsagePattern.matcher(html).find()) {
+                analysis.setHasDynamicImport(true);
+                analysis.setDynamicImportRisk("HIGH");
+                analysis.getRealTimeVectors().add("DynamicImport");
+                callbacks.printOutput("[REALTIME] Dynamic Import detected with usage - Runtime module loading active");
+            }
         }
         
-        // SHARED ARRAY BUFFER DETECTION
-        if (htmlLower.contains("sharedarraybuffer") || htmlLower.contains("shared array buffer")) {
-            analysis.setHasSharedArrayBuffer(true);
-            analysis.setSharedArrayBufferRisk("HIGH");
-            analysis.getRealTimeVectors().add("SharedArrayBuffer");
-            callbacks.printOutput("[REALTIME] SharedArrayBuffer detected - Shared memory possible");
+        // SHARED ARRAY BUFFER DETECTION - Enhanced with regex patterns
+        Pattern sharedArrayBufferPattern = Pattern.compile(
+            "(?:new\\s+)?SharedArrayBuffer\\s*\\(|sharedarraybuffer|shared\\s*array\\s*buffer",
+            Pattern.CASE_INSENSITIVE
+        );
+        if (sharedArrayBufferPattern.matcher(html).find()) {
+            // Check for actual usage
+            Pattern sabUsagePattern = Pattern.compile(
+                "new\\s+SharedArrayBuffer\\s*\\(|SharedArrayBuffer\\s*\\(|Atomics\\.(?:load|store|exchange)",
+                Pattern.CASE_INSENSITIVE
+            );
+            if (sabUsagePattern.matcher(html).find()) {
+                analysis.setHasSharedArrayBuffer(true);
+                analysis.setSharedArrayBufferRisk("HIGH");
+                analysis.getRealTimeVectors().add("SharedArrayBuffer");
+                callbacks.printOutput("[REALTIME] SharedArrayBuffer detected with usage - Shared memory active");
+            }
         }
         
-        // WEBASSEMBLY DETECTION
-        if (htmlLower.contains("webassembly") || htmlLower.contains("wasm") || htmlLower.contains("webassembly.instantiate")) {
-            analysis.setHasWebAssembly(true);
-            analysis.setWebAssemblyRisk("HIGH");
-            analysis.getRealTimeVectors().add("WebAssembly");
-            callbacks.printOutput("[REALTIME] WebAssembly detected - Native code execution possible");
+        // WEBASSEMBLY DETECTION - Enhanced with regex patterns
+        Pattern webAssemblyPattern = Pattern.compile(
+            "WebAssembly\\.(?:instantiate|compile|validate)|webassembly|wasm|\\.wasm",
+            Pattern.CASE_INSENSITIVE
+        );
+        if (webAssemblyPattern.matcher(html).find()) {
+            // Check for actual WebAssembly usage
+            Pattern wasmUsagePattern = Pattern.compile(
+                "WebAssembly\\.instantiate\\s*\\(|WebAssembly\\.compile\\s*\\(|fetch\\s*\\([^)]*\\.wasm",
+                Pattern.CASE_INSENSITIVE
+            );
+            if (wasmUsagePattern.matcher(html).find()) {
+                analysis.setHasWebAssembly(true);
+                analysis.setWebAssemblyRisk("HIGH");
+                analysis.getRealTimeVectors().add("WebAssembly");
+                callbacks.printOutput("[REALTIME] WebAssembly detected with usage - Native code execution active");
+            }
         }
         
         // REQUEST ANIMATION FRAME DETECTION
@@ -549,89 +892,270 @@ public class EnhancedDOMXSSDetector {
     /**
      * Generate Context-Specific Real Exploit POC
      */
+    /**
+     * Generate Real Exploit POC - FIXED: Prevent OutOfMemoryError with size limits
+     */
     private String generateRealExploitPOC(DOMXSSResult result, IHttpRequestResponse requestResponse) {
-        StringBuilder poc = new StringBuilder();
-        
-        String targetUrl = requestResponse.getHttpService().getProtocol() + "://" + 
-                          requestResponse.getHttpService().getHost() + ":" + 
-                          requestResponse.getHttpService().getPort() + 
-                          helpers.analyzeRequest(requestResponse).getUrl().getPath();
-        
-        poc.append("DOM XSS Vulnerability Detected\n");
-        poc.append("Target URL: ").append(targetUrl).append("\n");
-        poc.append("Vulnerability Score: ").append(result.getVulnerabilityScore()).append("%\n");
-        poc.append("Risk Level: ").append(result.getRiskLevel()).append("\n");
-        poc.append("Confidence: ").append(result.getConfidenceLevel()).append("\n\n");
-        
-        poc.append("Context-Specific Exploit Code\n");
-        
-        // Generate context-specific exploits for each data flow
-        for (DataFlow flow : result.getDataFlows()) {
-            poc.append("// Context-Specific Exploit: ").append(flow.getSource().getName()).append(" -> ").append(flow.getSink().getName()).append("\n");
-            poc.append("// Risk Level: ").append(flow.getRiskLevel()).append("\n");
-            poc.append("// Payload: ").append(flow.getExploitPayload()).append("\n");
-            poc.append("var domExploit = {\n");
-            poc.append("    target: '").append(targetUrl).append("',\n");
-            poc.append("    source: '").append(flow.getSource().getName()).append("',\n");
-            poc.append("    sink: '").append(flow.getSink().getName()).append("',\n");
-            poc.append("    payload: '").append(flow.getExploitPayload().replace("'", "\\'")).append("',\n");
-            poc.append("    method: 'DOM XSS Exploit',\n");
-            poc.append("    execute: function() {\n");
-            poc.append("        // Method 1: Direct source injection\n");
-            poc.append("        if (this.source.includes('location.hash')) {\n");
-            poc.append("            location.hash = this.payload;\n");
-            poc.append("        } else if (this.source.includes('location.search')) {\n");
-            poc.append("            var url = new URL(window.location);\n");
-            poc.append("            url.searchParams.set('param', this.payload);\n");
-            poc.append("            window.location = url;\n");
-            poc.append("        } else if (this.source.includes('document.referrer')) {\n");
-            poc.append("            // Exploit via referrer manipulation\n");
-            poc.append("            var referrer = document.referrer;\n");
-            poc.append("            if (referrer) {\n");
-            poc.append("                var refUrl = new URL(referrer);\n");
-            poc.append("                refUrl.searchParams.set('param', this.payload);\n");
-            poc.append("                document.referrer = refUrl.toString();\n");
-            poc.append("            }\n");
-            poc.append("        }\n");
-            poc.append("        \n");
-            poc.append("        // Method 2: Sink exploitation\n");
-            poc.append("        if (this.sink.includes('innerHTML')) {\n");
-            poc.append("            var element = document.getElementById('target');\n");
-            poc.append("            if (element) {\n");
-            poc.append("                element.innerHTML = this.payload;\n");
-            poc.append("            }\n");
-            poc.append("        } else if (this.sink.includes('eval')) {\n");
-            poc.append("            eval(this.payload);\n");
-            poc.append("        } else if (this.sink.includes('document.write')) {\n");
-            poc.append("            document.write(this.payload);\n");
-            poc.append("        }\n");
-            poc.append("    }\n");
-            poc.append("};\n\n");
+        try {
+            StringBuilder poc = new StringBuilder();
             
-            // Generate specific exploit URLs
-            poc.append("// Context-Specific Exploit URLs:\n");
-            poc.append("// URL Fragment: ").append(targetUrl).append(flow.getExploitPayload()).append("\n");
-            poc.append("// Query Parameter: ").append(targetUrl).append("?param=").append(flow.getExploitPayload()).append("\n");
-            poc.append("// Hash-based: ").append(targetUrl).append("#").append(flow.getExploitPayload()).append("\n\n");
-        }
-        
-        // Generate context-specific framework exploits
-        if (!result.getDetectedFrameworks().isEmpty()) {
-            poc.append("Framework-Specific Exploits:\n");
-            for (String framework : result.getDetectedFrameworks()) {
-                poc.append("// Framework: ").append(framework).append("\n");
-                poc.append("var ").append(framework.toLowerCase()).append("Exploit = {\n");
+            // CRITICAL FIX: Limit size to prevent OutOfMemoryError
+            final int MAX_POC_SIZE = 100000; // 100KB limit
+            final int MAX_DATA_FLOWS = 10; // Limit data flows to prevent excessive generation
+            final int MAX_PAYLOAD_LENGTH = 500; // Limit payload length in POC
+            
+            String targetUrl = requestResponse.getHttpService().getProtocol() + "://" + 
+                              requestResponse.getHttpService().getHost() + ":" + 
+                              requestResponse.getHttpService().getPort() + 
+                              helpers.analyzeRequest(requestResponse).getUrl().getPath();
+            
+            poc.append("DOM XSS Vulnerability Detected\n");
+            poc.append("Target URL: ").append(targetUrl).append("\n");
+            poc.append("Vulnerability Score: ").append(result.getVulnerabilityScore()).append("%\n");
+            poc.append("Risk Level: ").append(result.getRiskLevel()).append("\n");
+            poc.append("Confidence: ").append(result.getConfidenceLevel()).append("\n\n");
+            
+            poc.append("Context-Specific Exploit Code\n");
+            
+            // Generate context-specific exploits for each data flow - WITH LIMITS
+            int flowCount = 0;
+            List<DataFlow> dataFlows = result.getDataFlows();
+            if (dataFlows == null || dataFlows.isEmpty()) {
+                poc.append("// No data flows detected\n");
+            } else {
+                // CRITICAL: Limit number of flows to prevent memory issues
+                int flowsToProcess = Math.min(dataFlows.size(), MAX_DATA_FLOWS);
+                for (int i = 0; i < flowsToProcess; i++) {
+                    DataFlow flow = dataFlows.get(i);
+                    if (flow == null) continue;
+                    
+                    // CRITICAL: Check size limit before processing
+                    if (poc.length() > MAX_POC_SIZE) {
+                        poc.append("\n// ... (POC truncated to prevent memory issues)\n");
+                        break;
+                    }
+                    
+                    // CRITICAL: Truncate payload if too long or null
+                    String exploitPayload = flow.getExploitPayload();
+                    if (exploitPayload == null) {
+                        exploitPayload = "<script>alert('XSS')</script>";
+                    }
+                    if (exploitPayload.length() > MAX_PAYLOAD_LENGTH) {
+                        exploitPayload = exploitPayload.substring(0, MAX_PAYLOAD_LENGTH) + "...";
+                    }
+                
+                poc.append("// Context-Specific Exploit: ").append(flow.getSource().getName()).append(" -> ").append(flow.getSink().getName()).append("\n");
+                poc.append("// Risk Level: ").append(flow.getRiskLevel()).append("\n");
+                poc.append("// Payload: ").append(exploitPayload).append("\n");
+                poc.append("var domExploit").append(flowCount).append(" = {\n");
                 poc.append("    target: '").append(targetUrl).append("',\n");
-                poc.append("    framework: '").append(framework).append("',\n");
-                poc.append("    method: '").append(framework).append(" DOM XSS',\n");
+                poc.append("    source: '").append(flow.getSource().getName()).append("',\n");
+                poc.append("    sink: '").append(flow.getSink().getName()).append("',\n");
+                poc.append("    payload: '").append(exploitPayload.replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")).append("',\n");
+                poc.append("    method: 'DOM XSS Exploit',\n");
                 poc.append("    execute: function() {\n");
-                poc.append("        ").append(generateFrameworkExploit(framework, targetUrl)).append("\n");
+                poc.append("        // Method 1: Direct source injection\n");
+                poc.append("        if (this.source.includes('location.hash')) {\n");
+                poc.append("            location.hash = this.payload;\n");
+                poc.append("        } else if (this.source.includes('location.search')) {\n");
+                poc.append("            var url = new URL(window.location);\n");
+                poc.append("            url.searchParams.set('param', this.payload);\n");
+                poc.append("            window.location = url;\n");
+                poc.append("        } else if (this.source.includes('document.referrer')) {\n");
+                poc.append("            // Exploit via referrer manipulation\n");
+                poc.append("            var referrer = document.referrer;\n");
+                poc.append("            if (referrer) {\n");
+                poc.append("                var refUrl = new URL(referrer);\n");
+                poc.append("                refUrl.searchParams.set('param', this.payload);\n");
+                poc.append("                document.referrer = refUrl.toString();\n");
+                poc.append("            }\n");
+                poc.append("        }\n");
+                poc.append("        \n");
+                poc.append("        // Method 2: Sink exploitation\n");
+                poc.append("        if (this.sink.includes('innerHTML')) {\n");
+                poc.append("            var element = document.getElementById('target');\n");
+                poc.append("            if (element) {\n");
+                poc.append("                element.innerHTML = this.payload;\n");
+                poc.append("            }\n");
+                poc.append("        } else if (this.sink.includes('eval')) {\n");
+                poc.append("            eval(this.payload);\n");
+                poc.append("        } else if (this.sink.includes('document.write')) {\n");
+                poc.append("            document.write(this.payload);\n");
+                poc.append("        }\n");
                 poc.append("    }\n");
                 poc.append("};\n\n");
+                
+                    // Generate specific exploit URLs - WITH LENGTH LIMITS
+                    String safePayload = exploitPayload.length() > 100 ? exploitPayload.substring(0, 100) + "..." : exploitPayload;
+                    // CRITICAL: Escape special characters in URL
+                    safePayload = safePayload.replace("\n", "").replace("\r", "").replace("\t", "");
+                    
+                    poc.append("// Context-Specific Exploit URLs:\n");
+                    poc.append("// URL Fragment: ").append(targetUrl).append("#").append(safePayload).append("\n");
+                    poc.append("// Query Parameter: ").append(targetUrl).append("?param=").append(safePayload).append("\n");
+                    poc.append("// Hash-based: ").append(targetUrl).append("#").append(safePayload).append("\n\n");
+                    
+                    flowCount++;
+                    
+                    // CRITICAL: Check size limit to prevent OutOfMemoryError
+                    if (poc.length() > MAX_POC_SIZE) {
+                        poc.append("\n// ... (POC truncated to prevent memory issues)\n");
+                        break;
+                    }
+                }
+                
+                if (dataFlows.size() > MAX_DATA_FLOWS) {
+                    poc.append("\n// ... (additional ").append(dataFlows.size() - MAX_DATA_FLOWS).append(" data flows omitted)\n");
+                }
             }
+            
+            // Generate context-specific framework exploits - WITH LIMITS
+            if (!result.getDetectedFrameworks().isEmpty() && poc.length() < MAX_POC_SIZE) {
+                poc.append("\n=== Framework-Specific Exploits ===\n");
+                int frameworkCount = 0;
+                for (String framework : result.getDetectedFrameworks()) {
+                    if (frameworkCount >= 5 || poc.length() > MAX_POC_SIZE) {
+                        break;
+                    }
+                    poc.append("// Framework: ").append(framework).append("\n");
+                    poc.append("var ").append(framework.toLowerCase()).append("Exploit = {\n");
+                    poc.append("    target: '").append(targetUrl).append("',\n");
+                    poc.append("    framework: '").append(framework).append("',\n");
+                    poc.append("    method: '").append(framework).append(" DOM XSS',\n");
+                    poc.append("    execute: function() {\n");
+                    String frameworkExploit = generateFrameworkExploit(framework, targetUrl);
+                    if (frameworkExploit.length() > 500) {
+                        frameworkExploit = frameworkExploit.substring(0, 500) + "...";
+                    }
+                    poc.append("        ").append(frameworkExploit).append("\n");
+                    poc.append("    }\n");
+                    poc.append("};\n\n");
+                    frameworkCount++;
+                }
+            }
+            
+            // CRITICAL: Add Real-Time Dynamic Exploitation Instructions
+            RealTimeDynamicAnalysis realTimeAnalysis = result.getRealTimeAnalysis();
+            if (realTimeAnalysis != null && realTimeAnalysis.hasRealTimeVectors() && poc.length() < MAX_POC_SIZE) {
+                poc.append("\n=== Real-Time Dynamic Exploitation Instructions ===\n");
+                poc.append("// These exploits target real-time vectors detected in the application\n\n");
+                
+                if (realTimeAnalysis.isHasMutationObserver()) {
+                    poc.append("// 1. MutationObserver Exploitation:\n");
+                    poc.append("// Step 1: Inject payload that triggers DOM mutation\n");
+                    poc.append("// Step 2: MutationObserver will detect changes and execute payload\n");
+                    poc.append("var mutationExploit = function() {\n");
+                    poc.append("    const observer = new MutationObserver((mutations) => {\n");
+                    poc.append("        mutations.forEach((mutation) => {\n");
+                    poc.append("            if (mutation.addedNodes.length > 0) {\n");
+                    poc.append("                mutation.addedNodes.forEach((node) => {\n");
+                    poc.append("                    if (node.nodeType === 1 && node.innerHTML) {\n");
+                    poc.append("                        eval(node.innerHTML);\n");
+                    poc.append("                    }\n");
+                    poc.append("                });\n");
+                    poc.append("            }\n");
+                    poc.append("        });\n");
+                    poc.append("    });\n");
+                    poc.append("    observer.observe(document.body, { childList: true, subtree: true, attributes: true });\n");
+                    poc.append("    // Trigger mutation by injecting payload\n");
+                    poc.append("    document.body.innerHTML += '<script>alert(\"MutationObserver XSS\")</script>';\n");
+                    poc.append("};\n\n");
+                }
+                
+                if (realTimeAnalysis.isHasWebSocket()) {
+                    poc.append("// 2. WebSocket Exploitation:\n");
+                    poc.append("// Step 1: Connect to WebSocket endpoint\n");
+                    poc.append("// Step 2: Send malicious payload via WebSocket\n");
+                    poc.append("// Step 3: Server echoes payload, triggering XSS\n");
+                    poc.append("var websocketExploit = function() {\n");
+                    poc.append("    const ws = new WebSocket('ws://' + window.location.host + '/ws');\n");
+                    poc.append("    ws.onopen = function() {\n");
+                    poc.append("        ws.send('<script>alert(\"WebSocket XSS\")</script>');\n");
+                    poc.append("    };\n");
+                    poc.append("    ws.onmessage = function(event) {\n");
+                    poc.append("        document.body.innerHTML += event.data;\n");
+                    poc.append("    };\n");
+                    poc.append("};\n\n");
+                }
+                
+                if (realTimeAnalysis.isHasServiceWorker()) {
+                    poc.append("// 3. ServiceWorker Exploitation:\n");
+                    poc.append("// Step 1: Register malicious ServiceWorker\n");
+                    poc.append("// Step 2: ServiceWorker intercepts requests and injects payload\n");
+                    poc.append("var serviceWorkerExploit = function() {\n");
+                    poc.append("    navigator.serviceWorker.register('data:application/javascript,' + encodeURIComponent(\n");
+                    poc.append("        'self.addEventListener(\"fetch\", e => {' +\n");
+                    poc.append("        'e.respondWith(new Response(\"<script>alert(\\\"SW XSS\\\")</script>\"))' +\n");
+                    poc.append("        '});'\n");
+                    poc.append("    )).then(() => {\n");
+                    poc.append("        console.log('ServiceWorker registered - XSS payload active');\n");
+                    poc.append("    });\n");
+                    poc.append("};\n\n");
+                }
+                
+                if (realTimeAnalysis.isHasDynamicImport()) {
+                    poc.append("// 4. Dynamic Import Exploitation:\n");
+                    poc.append("// Step 1: Use dynamic import to load malicious code\n");
+                    poc.append("// Step 2: Imported code executes in page context\n");
+                    poc.append("var dynamicImportExploit = function() {\n");
+                    poc.append("    import('data:text/javascript,alert(\"Dynamic Import XSS\")').then(() => {\n");
+                    poc.append("        console.log('Dynamic import executed');\n");
+                    poc.append("    });\n");
+                    poc.append("};\n\n");
+                }
+                
+                if (realTimeAnalysis.isHasWebAssembly()) {
+                    poc.append("// 5. WebAssembly Exploitation:\n");
+                    poc.append("// Step 1: Compile malicious WebAssembly module\n");
+                    poc.append("// Step 2: Execute WebAssembly code that triggers XSS\n");
+                    poc.append("var wasmExploit = function() {\n");
+                    poc.append("    const wasmCode = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);\n");
+                    poc.append("    WebAssembly.instantiate(wasmCode).then(module => {\n");
+                    poc.append("        eval('alert(\"WebAssembly XSS\")');\n");
+                    poc.append("    });\n");
+                    poc.append("};\n\n");
+                }
+                
+                poc.append("// Execute all real-time exploits:\n");
+                poc.append("// mutationExploit();\n");
+                poc.append("// websocketExploit();\n");
+                poc.append("// serviceWorkerExploit();\n");
+                poc.append("// dynamicImportExploit();\n");
+                poc.append("// wasmExploit();\n\n");
+            }
+            
+            // Add comprehensive step-by-step exploitation guide
+            if (poc.length() < MAX_POC_SIZE) {
+                poc.append("\n=== Step-by-Step Dynamic Exploitation Guide ===\n");
+                poc.append("1. Open browser Developer Tools (F12)\n");
+                poc.append("2. Navigate to Console tab\n");
+                poc.append("3. Copy and paste the exploit code above\n");
+                poc.append("4. Execute the exploit function (e.g., domExploit0.execute())\n");
+                poc.append("5. Observe XSS payload execution\n");
+                poc.append("6. For real-time vectors, follow the specific instructions above\n");
+                poc.append("7. Verify payload execution in browser console\n\n");
+                
+                poc.append("=== Manual Testing URLs ===\n");
+                for (String payload : result.getSpecificPayloads()) {
+                    if (poc.length() > MAX_POC_SIZE - 200) break;
+                    String safePayload = payload.length() > 50 ? payload.substring(0, 50) + "..." : payload;
+                    safePayload = safePayload.replace("\n", "").replace("\r", "").replace("\t", "");
+                    poc.append("// Hash-based: ").append(targetUrl).append("#").append(safePayload).append("\n");
+                    poc.append("// Query-based: ").append(targetUrl).append("?param=").append(safePayload).append("\n");
+                }
+            }
+            
+            // CRITICAL: Final size check
+            if (poc.length() > MAX_POC_SIZE) {
+                return poc.substring(0, MAX_POC_SIZE) + "\n// ... (truncated)";
+            }
+            
+            return poc.toString();
+            
+        } catch (Exception e) {
+            callbacks.printError("Error generating exploit POC: " + e.getMessage());
+            return "Error generating exploit POC: " + e.getMessage();
         }
-        
-        return poc.toString();
     }
     
     /**
@@ -663,37 +1187,115 @@ public class EnhancedDOMXSSDetector {
     }
     
     /**
-     * Generate Context-Specific Source/Sink Analysis
+     * Generate Context-Specific Source/Sink Analysis - FIXED: Prevent OutOfMemoryError
      */
     private String generateSourceSinkAnalysis(DOMXSSResult result) {
-        StringBuilder analysis = new StringBuilder();
-        
-        analysis.append("Context-Specific Source/Sink Analysis\n");
-        
-        analysis.append("Detected DOM Sources:\n");
-        for (DOMSource source : result.getDetectedSources()) {
-            analysis.append("Source: ").append(source.getName()).append("\n");
-            analysis.append("Risk Level: ").append(source.getRiskLevel()).append("\n");
-            analysis.append("Context: ").append(source.getContext()).append("\n");
-            analysis.append("Position: ").append(source.getPosition()).append("\n\n");
+        try {
+            StringBuilder analysis = new StringBuilder();
+            
+            // CRITICAL: Limit size to prevent OutOfMemoryError
+            final int MAX_ANALYSIS_SIZE = 50000; // 50KB limit
+            final int MAX_SOURCES = 20;
+            final int MAX_SINKS = 20;
+            
+            analysis.append("Context-Specific Source/Sink Analysis\n");
+            
+            analysis.append("Detected DOM Sources:\n");
+            List<DOMSource> sources = result.getDetectedSources();
+            if (sources != null) {
+                int sourceCount = 0;
+                for (DOMSource source : sources) {
+                    if (sourceCount >= MAX_SOURCES || analysis.length() > MAX_ANALYSIS_SIZE) {
+                        analysis.append("// ... (additional sources omitted)\n");
+                        break;
+                    }
+                    if (source == null) continue;
+                    
+                    String sourceName = source.getName();
+                    if (sourceName != null && sourceName.length() > 200) {
+                        sourceName = sourceName.substring(0, 200) + "...";
+                    }
+                    
+                    analysis.append("Source: ").append(sourceName != null ? sourceName : "unknown").append("\n");
+                    analysis.append("Risk Level: ").append(source.getRiskLevel() != null ? source.getRiskLevel() : "Unknown").append("\n");
+                    String context = source.getContext();
+                    if (context != null && context.length() > 200) {
+                        context = context.substring(0, 200) + "...";
+                    }
+                    analysis.append("Context: ").append(context != null ? context : "Unknown").append("\n");
+                    analysis.append("Position: ").append(source.getPosition()).append("\n\n");
+                    sourceCount++;
+                }
+            }
+            
+            analysis.append("Detected DOM Sinks:\n");
+            List<DOMSink> sinks = result.getDetectedSinks();
+            if (sinks != null) {
+                int sinkCount = 0;
+                for (DOMSink sink : sinks) {
+                    if (sinkCount >= MAX_SINKS || analysis.length() > MAX_ANALYSIS_SIZE) {
+                        analysis.append("// ... (additional sinks omitted)\n");
+                        break;
+                    }
+                    if (sink == null) continue;
+                    
+                    String sinkName = sink.getName();
+                    if (sinkName != null && sinkName.length() > 200) {
+                        sinkName = sinkName.substring(0, 200) + "...";
+                    }
+                    
+                    analysis.append("Sink: ").append(sinkName != null ? sinkName : "unknown").append("\n");
+                    analysis.append("Risk Level: ").append(sink.getRiskLevel() != null ? sink.getRiskLevel() : "Unknown").append("\n");
+                    String sinkContext = sink.getContext();
+                    if (sinkContext != null && sinkContext.length() > 200) {
+                        sinkContext = sinkContext.substring(0, 200) + "...";
+                    }
+                    analysis.append("Context: ").append(sinkContext != null ? sinkContext : "Unknown").append("\n");
+                    analysis.append("Position: ").append(sink.getPosition()).append("\n\n");
+                    sinkCount++;
+                }
+            }
+            
+            // CRITICAL: Limit data flows to prevent memory issues
+            analysis.append("Data Flows:\n");
+            List<DataFlow> dataFlows = result.getDataFlows();
+            if (dataFlows != null) {
+                int flowCount = 0;
+                final int MAX_FLOWS = 10;
+                for (DataFlow flow : dataFlows) {
+                    if (flowCount >= MAX_FLOWS || analysis.length() > MAX_ANALYSIS_SIZE) {
+                        analysis.append("// ... (additional flows omitted)\n");
+                        break;
+                    }
+                    if (flow == null || flow.getSource() == null || flow.getSink() == null) continue;
+                    
+                    String sourceName = flow.getSource().getName();
+                    String sinkName = flow.getSink().getName();
+                    if (sourceName != null && sourceName.length() > 200) sourceName = sourceName.substring(0, 200) + "...";
+                    if (sinkName != null && sinkName.length() > 200) sinkName = sinkName.substring(0, 200) + "...";
+                    
+                    String exploitPayload = flow.getExploitPayload();
+                    if (exploitPayload != null && exploitPayload.length() > 200) {
+                        exploitPayload = exploitPayload.substring(0, 200) + "...";
+                    }
+                    
+                    analysis.append("Flow: ").append(sourceName != null ? sourceName : "unknown").append(" -> ").append(sinkName != null ? sinkName : "unknown").append("\n");
+                    analysis.append("Risk Level: ").append(flow.getRiskLevel() != null ? flow.getRiskLevel() : "Unknown").append("\n");
+                    analysis.append("Exploit Payload: ").append(exploitPayload != null ? exploitPayload : "N/A").append("\n\n");
+                    flowCount++;
+                }
+            }
+            
+            // CRITICAL: Final size check
+            if (analysis.length() > MAX_ANALYSIS_SIZE) {
+                return analysis.substring(0, MAX_ANALYSIS_SIZE) + "\n// ... (truncated)";
+            }
+            
+            return analysis.toString();
+        } catch (Exception e) {
+            callbacks.printError("Error generating source/sink analysis: " + e.getMessage());
+            return "Error generating source/sink analysis: " + e.getMessage();
         }
-        
-        analysis.append("Detected DOM Sinks:\n");
-        for (DOMSink sink : result.getDetectedSinks()) {
-            analysis.append("Sink: ").append(sink.getName()).append("\n");
-            analysis.append("Risk Level: ").append(sink.getRiskLevel()).append("\n");
-            analysis.append("Context: ").append(sink.getContext()).append("\n");
-            analysis.append("Position: ").append(sink.getPosition()).append("\n\n");
-        }
-        
-        analysis.append("Data Flows:\n");
-        for (DataFlow flow : result.getDataFlows()) {
-            analysis.append("Flow: ").append(flow.getSource().getName()).append(" -> ").append(flow.getSink().getName()).append("\n");
-            analysis.append("Risk Level: ").append(flow.getRiskLevel()).append("\n");
-            analysis.append("Exploit Payload: ").append(flow.getExploitPayload()).append("\n\n");
-        }
-        
-        return analysis.toString();
     }
     
     /**
@@ -707,19 +1309,24 @@ public class EnhancedDOMXSSDetector {
                 payload = "#<script>alert('DOM_XSS')</script>";
             }
             
-            // Create test request with payload
-            String testRequest = createDOMXSSTestRequest(requestResponse, payload);
-            if (testRequest != null) {
-                result.setTestRequest(testRequest);
+            // CRITICAL: For DOM XSS passive scanning, we analyze the actual response
+            // We cannot send HTTP requests in passive scanning - that requires active scanning
+            // Store the actual request/response as evidence
+            try {
+                // Use actual request/response from the server
+                byte[] actualRequest = requestResponse.getRequest();
+                byte[] actualResponse = requestResponse.getResponse();
+                
+                if (actualRequest != null && actualRequest.length > 0) {
+                    result.setTestRequest(new String(actualRequest, StandardCharsets.UTF_8));
+                }
+                if (actualResponse != null && actualResponse.length > 0) {
+                    result.setTestResponse(new String(actualResponse, StandardCharsets.UTF_8));
+                }
                 result.setTestPayload(payload);
-                callbacks.printOutput("[DOM-XSS] Created test request with payload: " + payload);
-            }
-            
-            // Create test response showing exploitation
-            String testResponse = createDOMXSSTestResponse(requestResponse, payload, result);
-            if (testResponse != null) {
-                result.setTestResponse(testResponse);
-                callbacks.printOutput("[DOM-XSS] Created test response showing exploitation");
+                callbacks.printOutput("[DOM-XSS] Using actual request/response for evidence");
+            } catch (Exception e) {
+                callbacks.printError("[DOM-XSS] Error processing actual request/response: " + e.getMessage());
             }
             
         } catch (Exception e) {
@@ -769,132 +1376,9 @@ public class EnhancedDOMXSSDetector {
         return "#<script>alert('DOM_XSS')</script>";
     }
     
-    /**
-     * Create test request for DOM XSS attacks
-     */
-    private String createDOMXSSTestRequest(IHttpRequestResponse requestResponse, String payload) {
-        try {
-            byte[] originalRequest = requestResponse.getRequest();
-            IRequestInfo requestInfo = helpers.analyzeRequest(requestResponse);
-            List<String> headers = requestInfo.getHeaders();
-            
-            // Create new request with payload
-            StringBuilder newRequest = new StringBuilder();
-            
-            // Add headers
-            for (String header : headers) {
-                if (!header.toLowerCase().startsWith("content-length:")) {
-                    newRequest.append(header).append("\r\n");
-                }
-            }
-            
-            // Add payload to request based on DOM source type
-            if (payload.startsWith("#")) {
-                // Hash-based DOM XSS - add to URL fragment
-                String url = requestInfo.getUrl().toString();
-                if (url.contains("#")) {
-                    url = url.substring(0, url.indexOf("#"));
-                }
-                url += payload;
-                
-                // Update first line
-                String firstLine = headers.get(0);
-                String[] parts = firstLine.split(" ");
-                if (parts.length >= 3) {
-                    newRequest = new StringBuilder();
-                    newRequest.append(parts[0]).append(" ").append(url).append(" ").append(parts[2]).append("\r\n");
-                    for (int i = 1; i < headers.size(); i++) {
-                        String header = headers.get(i);
-                        if (!header.toLowerCase().startsWith("content-length:")) {
-                            newRequest.append(header).append("\r\n");
-                        }
-                    }
-                }
-            } else if (payload.startsWith("?")) {
-                // Query parameter DOM XSS
-                String url = requestInfo.getUrl().toString();
-                if (url.contains("?")) {
-                    url += "&" + payload.substring(1);
-                } else {
-                    url += payload;
-                }
-                
-                // Update first line
-                String firstLine = headers.get(0);
-                String[] parts = firstLine.split(" ");
-                if (parts.length >= 3) {
-                    newRequest = new StringBuilder();
-                    newRequest.append(parts[0]).append(" ").append(url).append(" ").append(parts[2]).append("\r\n");
-                    for (int i = 1; i < headers.size(); i++) {
-                        String header = headers.get(i);
-                        if (!header.toLowerCase().startsWith("content-length:")) {
-                            newRequest.append(header).append("\r\n");
-                        }
-                    }
-                }
-            } else {
-                // Regular payload - add to body
-                newRequest.append("\r\n");
-                newRequest.append("payload=").append(java.net.URLEncoder.encode(payload, "UTF-8"));
-            }
-            
-            newRequest.append("\r\n");
-            return newRequest.toString();
-            
-        } catch (Exception e) {
-            callbacks.printError("Error creating DOM XSS test request: " + e.getMessage());
-            return null;
-        }
-    }
-    
-    /**
-     * Create test response for DOM XSS attacks
-     */
-    private String createDOMXSSTestResponse(IHttpRequestResponse requestResponse, String payload, DOMXSSResult result) {
-        try {
-            byte[] originalResponse = requestResponse.getResponse();
-            IResponseInfo responseInfo = helpers.analyzeResponse(originalResponse);
-            List<String> headers = responseInfo.getHeaders();
-            
-            // Create new response with exploitation evidence
-            StringBuilder newResponse = new StringBuilder();
-            
-            // Add headers
-            for (String header : headers) {
-                if (!header.toLowerCase().startsWith("content-length:")) {
-                    newResponse.append(header).append("\r\n");
-                }
-            }
-            
-            // Create response body showing DOM XSS exploitation
-            newResponse.append("\r\n");
-            newResponse.append("<!DOCTYPE html>\n");
-            newResponse.append("<html>\n");
-            newResponse.append("<head>\n");
-            newResponse.append("    <title>DOM XSS Test Response</title>\n");
-            newResponse.append("</head>\n");
-            newResponse.append("<body>\n");
-            newResponse.append("    <h1>DOM XSS Vulnerability Detected</h1>\n");
-            newResponse.append("    <p>Payload: ").append(payload).append("</p>\n");
-            newResponse.append("    <p>Sources Detected: ").append(result.getDetectedSources().size()).append("</p>\n");
-            newResponse.append("    <p>Sinks Detected: ").append(result.getDetectedSinks().size()).append("</p>\n");
-            newResponse.append("    <p>Data Flows: ").append(result.getDataFlows().size()).append("</p>\n");
-            newResponse.append("    <p>Risk Level: ").append(result.getRiskLevel()).append("</p>\n");
-            newResponse.append("    <div>\n");
-            newResponse.append("        <h3>Exploitation Evidence:</h3>\n");
-            newResponse.append("        <p>The DOM XSS vulnerability was successfully exploited.</p>\n");
-            newResponse.append("        <p>This indicates a client-side DOM manipulation vulnerability.</p>\n");
-            newResponse.append("    </div>\n");
-            newResponse.append("</body>\n");
-            newResponse.append("</html>");
-            
-            return newResponse.toString();
-            
-        } catch (Exception e) {
-            callbacks.printError("Error creating DOM XSS test response: " + e.getMessage());
-            return null;
-        }
-    }
+    // REMOVED: createDOMXSSTestRequest() and createDOMXSSTestResponse() - These were creating synthetic/fake data
+    // For passive scanning, we MUST use actual request/response from the server
+    // For active scanning, we use actual HTTP requests via sendRealHttpRequest()
     
     /**
      * Generate Context-Specific Browser Exploit Code
@@ -911,26 +1395,90 @@ public class EnhancedDOMXSSDetector {
         code.append("// Copy and paste this code into browser console\n");
         code.append("// Target URL: ").append(targetUrl).append("\n\n");
         
-        code.append("// Function to test DOM XSS\n");
+        code.append("// ============================================\n");
+        code.append("// COMPREHENSIVE DOM XSS DYNAMIC EXPLOITATION\n");
+        code.append("// ============================================\n");
+        code.append("// Copy and paste this entire code block into browser console\n");
+        code.append("// Target URL: ").append(targetUrl).append("\n\n");
+        
+        code.append("// Function to test DOM XSS with all detected vectors\n");
         code.append("function testDOMXSS() {\n");
-        code.append("    console.log('[DOM XSS] Starting exploitation...');\n\n");
+        code.append("    console.log('[DOM XSS] Starting comprehensive exploitation...');\n");
+        code.append("    console.log('[DOM XSS] Detected ").append(result.getDataFlows().size()).append(" data flows');\n");
+        code.append("    console.log('[DOM XSS] Detected ").append(result.getDetectedSources().size()).append(" sources');\n");
+        code.append("    console.log('[DOM XSS] Detected ").append(result.getDetectedSinks().size()).append(" sinks');\n\n");
         
         // Generate context-specific test code for each data flow
+        int flowIndex = 0;
         for (DataFlow flow : result.getDataFlows()) {
-            code.append("    // Context-Specific Test: ").append(flow.getSource().getName()).append(" -> ").append(flow.getSink().getName()).append("\n");
-            code.append("    try {\n");
-            code.append("        console.log('[TEST] Testing ").append(flow.getSource().getName()).append(" -> ").append(flow.getSink().getName()).append("');\n");
-            code.append("        ").append(generateTestCode(flow)).append("\n");
-            code.append("        console.log('[SUCCESS] Payload executed successfully');\n");
-            code.append("    } catch (e) {\n");
-            code.append("        console.log('[ERROR] ").append(flow.getSource().getName()).append(" -> ").append(flow.getSink().getName()).append(" failed:', e.message);\n");
-            code.append("    }\n\n");
+            code.append("    // ===== Data Flow ").append(flowIndex + 1).append(": ").append(flow.getSource().getName()).append(" -> ").append(flow.getSink().getName()).append(" =====\n");
+            code.append("    (function() {\n");
+            code.append("        console.log('[TEST ").append(flowIndex + 1).append("] Testing ").append(flow.getSource().getName()).append(" -> ").append(flow.getSink().getName()).append("');\n");
+            code.append("        try {\n");
+            code.append("            ").append(generateTestCode(flow)).append("\n");
+            code.append("            console.log('[SUCCESS ").append(flowIndex + 1).append("] Payload executed successfully');\n");
+            code.append("        } catch (e) {\n");
+            code.append("            console.log('[ERROR ").append(flowIndex + 1).append("] Failed:', e.message);\n");
+            code.append("        }\n");
+            code.append("    })();\n\n");
+            flowIndex++;
         }
         
-        code.append("    console.log('[DOM XSS] Exploitation completed');\n");
+        // Add real-time dynamic exploitation
+        RealTimeDynamicAnalysis realTimeAnalysis = result.getRealTimeAnalysis();
+        if (realTimeAnalysis != null && realTimeAnalysis.hasRealTimeVectors()) {
+            code.append("    // ===== Real-Time Dynamic Exploitation =====\n");
+            
+            if (realTimeAnalysis.isHasMutationObserver()) {
+                code.append("    console.log('[REALTIME] Testing MutationObserver exploitation...');\n");
+                code.append("    try {\n");
+                code.append("        const mo = new MutationObserver((mutations) => {\n");
+                code.append("            mutations.forEach((m) => {\n");
+                code.append("                m.addedNodes.forEach((node) => {\n");
+                code.append("                    if (node.nodeType === 1 && node.innerHTML) eval(node.innerHTML);\n");
+                code.append("                });\n");
+                code.append("            });\n");
+                code.append("        });\n");
+                code.append("        mo.observe(document.body, { childList: true, subtree: true });\n");
+                code.append("        document.body.innerHTML += '<script>alert(\"MutationObserver XSS\")</script>';\n");
+                code.append("        console.log('[REALTIME] MutationObserver exploit executed');\n");
+                code.append("    } catch (e) { console.log('[REALTIME] MutationObserver failed:', e.message); }\n\n");
+            }
+            
+            if (realTimeAnalysis.isHasWebSocket()) {
+                code.append("    console.log('[REALTIME] Testing WebSocket exploitation...');\n");
+                code.append("    try {\n");
+                code.append("        const ws = new WebSocket('ws://' + window.location.host + '/ws');\n");
+                code.append("        ws.onopen = () => ws.send('<script>alert(\"WebSocket XSS\")</script>');\n");
+                code.append("        ws.onmessage = (e) => { document.body.innerHTML += e.data; };\n");
+                code.append("        console.log('[REALTIME] WebSocket exploit executed');\n");
+                code.append("    } catch (e) { console.log('[REALTIME] WebSocket failed:', e.message); }\n\n");
+            }
+            
+            if (realTimeAnalysis.isHasServiceWorker()) {
+                code.append("    console.log('[REALTIME] Testing ServiceWorker exploitation...');\n");
+                code.append("    try {\n");
+                code.append("        navigator.serviceWorker.register('data:application/javascript,' + encodeURIComponent(\n");
+                code.append("            'self.addEventListener(\"fetch\", e => e.respondWith(new Response(\"<script>alert(\\\"SW XSS\\\")</script>\")))'\n");
+                code.append("        )).then(() => console.log('[REALTIME] ServiceWorker exploit executed'));\n");
+                code.append("    } catch (e) { console.log('[REALTIME] ServiceWorker failed:', e.message); }\n\n");
+            }
+            
+            if (realTimeAnalysis.isHasDynamicImport()) {
+                code.append("    console.log('[REALTIME] Testing Dynamic Import exploitation...');\n");
+                code.append("    try {\n");
+                code.append("        import('data:text/javascript,alert(\"Dynamic Import XSS\")').then(() => \n");
+                code.append("            console.log('[REALTIME] Dynamic Import exploit executed')\n");
+                code.append("        );\n");
+                code.append("    } catch (e) { console.log('[REALTIME] Dynamic Import failed:', e.message); }\n\n");
+            }
+        }
+        
+        code.append("    console.log('[DOM XSS] Comprehensive exploitation completed');\n");
+        code.append("    console.log('[DOM XSS] Check browser console and page for XSS execution');\n");
         code.append("}\n\n");
         
-        code.append("// Execute the test\n");
+        code.append("// Execute comprehensive test\n");
         code.append("testDOMXSS();\n\n");
         
         // Generate context-specific individual payload tests
@@ -983,14 +1531,167 @@ public class EnhancedDOMXSSDetector {
     }
     
     private boolean isPotentialDataFlow(DOMSource source, DOMSink sink, String html) {
-        // More lenient data flow detection
-        // Check if source and sink are in the same script context
-        String sourceContext = extractContext(html, source.getPosition(), 200);
-        String sinkContext = extractContext(html, sink.getPosition(), 200);
+        // ENHANCED: Advanced data flow detection for SPAs and modern web apps
+        // Detects both direct and indirect flows (through state management, props, context)
         
-        // If they're in the same HTML document, consider it a potential data flow
-        // DOM XSS can occur even if sources and sinks are not directly connected
-        return true; // More lenient approach for DOM XSS detection
+        // Extract larger context for SPA detection (increased from 500 to 2000 chars)
+        String sourceContext = extractContext(html, source.getPosition(), 2000);
+        String sinkContext = extractContext(html, sink.getPosition(), 2000);
+        
+        String sourceName = source.getName().toLowerCase();
+        String sinkName = sink.getName().toLowerCase();
+        
+        // Extract variable/identifier from source
+        String sourceVar = extractSourceVariable(sourceName);
+        String sourceBase = extractSourceBase(sourceName); // e.g., "location" from "location.hash"
+        
+        // Check if source is user-controlled (critical for SPA detection)
+        boolean isUserControlled = sourceName.contains("location.hash") ||
+                                sourceName.contains("location.search") ||
+                                sourceName.contains("location.href") ||
+                                sourceName.contains("document.referrer") ||
+                                sourceName.contains("window.name") ||
+                                sourceName.contains("urlsearchparams") ||
+                                sourceName.contains("history.state") ||
+                                sourceName.contains("localstorage") ||
+                                sourceName.contains("sessionstorage") ||
+                                sourceName.contains("postmessage") ||
+                                sourceName.contains("event.data") ||
+                                sourceName.contains("message.data");
+        
+        // Check if sink is dangerous
+        boolean isDangerousSink = sinkName.contains("eval") || 
+                                sinkName.contains("innerhtml") || 
+                                sinkName.contains("outerhtml") ||
+                                sinkName.contains("document.write") ||
+                                sinkName.contains("insertadjacenthtml") ||
+                                sinkName.contains("dangerouslysetinnerhtml") ||
+                                sinkName.contains("v-html") ||
+                                sinkName.contains("ng-bind-html") ||
+                                (sinkName.contains("function") && (sinkContext.contains("eval") || sinkContext.contains("Function")));
+        
+        if (!isDangerousSink) {
+            return false; // Not a dangerous sink
+        }
+        
+        // ENHANCED: Check for direct data flow
+        String combinedContext = sourceContext + " " + sinkContext;
+        boolean hasDirectFlow = false;
+        
+        if (sourceVar != null && !sourceVar.isEmpty()) {
+            // Pattern 1: Direct assignment: var x = source; sink(x)
+            if (combinedContext.contains(sourceVar) && 
+                (sinkContext.contains(sourceVar) || sinkContext.contains("=" + sourceVar) || 
+                 sinkContext.contains("(" + sourceVar) || sinkContext.contains(sourceVar + ")"))) {
+                hasDirectFlow = true;
+            }
+            
+            // Pattern 2: Direct property access: sink(source.property)
+            if (sourceBase != null && !sourceBase.isEmpty()) {
+                if (sinkContext.contains(sourceBase + "." + sourceVar) || 
+                    sinkContext.contains(sourceBase + "[")) {
+                    hasDirectFlow = true;
+                }
+            }
+        }
+        
+        // ENHANCED: Check for indirect flows in SPAs (state management, props, context)
+        boolean hasIndirectFlow = false;
+        if (isUserControlled) {
+            // Pattern 3: State management flow (Redux, Vuex, MobX, Zustand)
+            if (combinedContext.contains("state") && combinedContext.contains("dispatch") ||
+                combinedContext.contains("store") && combinedContext.contains("commit") ||
+                combinedContext.contains("setstate") || combinedContext.contains("set(") ||
+                combinedContext.contains("usestate") || combinedContext.contains("usereducer")) {
+                // Check if source is used in state management context
+                if (sourceContext.contains("state") || sourceContext.contains("dispatch") || 
+                    sourceContext.contains("commit") || sourceContext.contains("setstate")) {
+                    hasIndirectFlow = true;
+                }
+            }
+            
+            // Pattern 4: Props/Context flow (React, Vue, Angular)
+            if (combinedContext.contains("props") || combinedContext.contains("context") ||
+                combinedContext.contains("$props") || combinedContext.contains("$attrs") ||
+                combinedContext.contains("this.") && (combinedContext.contains("props") || combinedContext.contains("state"))) {
+                // Check if source flows through props/context
+                if (sourceContext.contains("props") || sourceContext.contains("context") ||
+                    sourceContext.contains("$props") || sourceContext.contains("$attrs")) {
+                    hasIndirectFlow = true;
+                }
+            }
+            
+            // Pattern 5: Router parameter flow (React Router, Vue Router, Angular Router)
+            if (combinedContext.contains("router") || combinedContext.contains("route") ||
+                combinedContext.contains("params") || combinedContext.contains("query") ||
+                combinedContext.contains("match") || combinedContext.contains("$route")) {
+                // Check if source is from router
+                if (sourceName.contains("location") || sourceName.contains("history") ||
+                    sourceContext.contains("router") || sourceContext.contains("route")) {
+                    hasIndirectFlow = true;
+                }
+            }
+            
+            // Pattern 6: Event handler flow (onClick, onMessage, etc.)
+            if (combinedContext.contains("onclick") || combinedContext.contains("onmessage") ||
+                combinedContext.contains("addeventlistener") || combinedContext.contains("onevent")) {
+                if (sourceContext.contains("event") || sourceContext.contains("message") ||
+                    sourceName.contains("event.data") || sourceName.contains("message.data")) {
+                    hasIndirectFlow = true;
+                }
+            }
+        }
+        
+        // ENHANCED: For user-controlled sources, accept both direct and indirect flows
+        if (isUserControlled && (hasDirectFlow || hasIndirectFlow)) {
+            return true;
+        }
+        
+        // For non-user-controlled sources, require direct flow only
+        if (!isUserControlled && hasDirectFlow) {
+            // Additional validation for document.cookie
+            if (sourceName.contains("cookie") && !sinkContext.contains("cookie") && 
+                !sinkContext.contains("split") && !sinkContext.contains("indexOf")) {
+                return false; // Likely false positive
+            }
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Extract base identifier from source name (e.g., "location" from "location.hash")
+     */
+    private String extractSourceBase(String sourceName) {
+        if (sourceName == null || sourceName.isEmpty()) return null;
+        
+        if (sourceName.contains(".")) {
+            String[] parts = sourceName.split("\\.");
+            if (parts.length > 0) {
+                return parts[0].trim();
+            }
+        }
+        
+        return sourceName.trim();
+    }
+    
+    /**
+     * Extract variable/identifier from source name
+     */
+    private String extractSourceVariable(String sourceName) {
+        if (sourceName == null || sourceName.isEmpty()) return null;
+        
+        // Extract the last part after dot (e.g., "document.cookie" -> "cookie")
+        if (sourceName.contains(".")) {
+            String[] parts = sourceName.split("\\.");
+            if (parts.length > 0) {
+                return parts[parts.length - 1].trim();
+            }
+        }
+        
+        // If no dot, return the source name itself
+        return sourceName.trim();
     }
     
     private String calculateFlowRisk(DOMSource source, DOMSink sink) {

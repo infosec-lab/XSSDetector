@@ -66,38 +66,46 @@ public class EnhancedIssueReporter {
     }
 
     /**
-     * SIMPLIFIED ISSUE CREATION - Creates XSS issues with sensible validation
-     * This method bypasses the over-strict validation to ensure real issues get reported.
+     * SIMPLIFIED ISSUE CREATION - Fallback for confirmed XSS when enhanced method fails.
+     * Accepts vulnerabilityData map for access to TEST_REQUEST/TEST_RESPONSE and markers.
      */
     public IScanIssue createXSSIssue(IHttpRequestResponse requestResponse,
-                                     String paramName,
-                                     String payload,
-                                     String reflectionContext,
-                                     boolean payloadReflected,
-                                     double confidenceScore) {
+                                     Map<String, Object> vulnerabilityData) {
         try {
-            if (requestResponse == null) {
+            if (requestResponse == null || vulnerabilityData == null) {
                 return null;
             }
 
-            // Basic validation - must have param name and payload
+            // Extract fields from vulnerabilityData
+            String paramName = (String) vulnerabilityData.get("paramName");
             if (paramName == null || paramName.isEmpty()) {
                 paramName = "Unknown Parameter";
             }
+            String payload = extractRealPayload(vulnerabilityData);
             if (payload == null || payload.isEmpty()) {
                 callbacks.printOutput("[IssueReporter] Skipping: No payload provided");
                 return null;
             }
+            String reflectionContext = (String) vulnerabilityData.get("REFLECTION_CONTEXT");
+            double confidenceScore = getDouble(vulnerabilityData, "CONFIDENCE_SCORE", 0.0);
+            boolean confirmedXSS = Boolean.TRUE.equals(vulnerabilityData.get("CONFIRMED_XSS"));
 
-            // Check if payload looks like XSS (basic check)
-            String lowerPayload = payload.toLowerCase();
-            boolean looksLikeXSS = lowerPayload.contains("<") || lowerPayload.contains("javascript:") ||
-                                   lowerPayload.contains("onerror") || lowerPayload.contains("onload") ||
-                                   lowerPayload.contains("onclick") || lowerPayload.contains("alert(") ||
-                                   lowerPayload.contains("eval(") || lowerPayload.contains("document.");
+            // Validate: require CONFIRMED_XSS=true OR confidence >= 50
+            if (!confirmedXSS && confidenceScore < 50.0) {
+                callbacks.printOutput("[IssueReporter] Skipping: Not confirmed and confidence too low (" + confidenceScore + "%)");
+                return null;
+            }
 
-            if (!looksLikeXSS && !payloadReflected) {
-                callbacks.printOutput("[IssueReporter] Skipping: Payload doesn't look like XSS and not reflected");
+            // JSON responses are not directly exploitable -- require explicit confirmation
+            Boolean isJsonResponse = (Boolean) vulnerabilityData.get("IS_JSON_RESPONSE");
+            if (Boolean.TRUE.equals(isJsonResponse) && !confirmedXSS) {
+                callbacks.printOutput("[IssueReporter] Skipping: JSON response without confirmed exploitation");
+                return null;
+            }
+
+            // Validate: require payload to look like actual XSS
+            if (!isActualXSSPayload(payload)) {
+                callbacks.printOutput("[IssueReporter] Skipping: Payload is not an actual XSS payload");
                 return null;
             }
 
@@ -105,7 +113,7 @@ public class EnhancedIssueReporter {
             SeverityLevel severity = SeverityLevel.MEDIUM;
             ConfidenceLevel confidence = ConfidenceLevel.TENTATIVE;
 
-            if (payloadReflected) {
+            if (confirmedXSS) {
                 if (reflectionContext != null &&
                     (reflectionContext.contains("HTML") || reflectionContext.contains("Script") ||
                      reflectionContext.contains("Attribute") || reflectionContext.contains("Dangerous"))) {
@@ -129,11 +137,11 @@ public class EnhancedIssueReporter {
             StringBuilder detail = new StringBuilder();
             detail.append("<p><b>XSS Vulnerability Detected</b></p>");
             detail.append("<p><b>Parameter:</b> ").append(escapeHtml(paramName)).append("</p>");
-            detail.append("<p><b>Payload:</b> <code>").append(escapeHtml(payload)).append("</code></p>");
+            detail.append("<p><b>Payload:</b> <code>").append(escapeHtml(truncatePayload(payload, 200))).append("</code></p>");
             if (reflectionContext != null) {
                 detail.append("<p><b>Context:</b> ").append(escapeHtml(reflectionContext)).append("</p>");
             }
-            detail.append("<p><b>Reflected:</b> ").append(payloadReflected ? "Yes" : "Detected pattern").append("</p>");
+            detail.append("<p><b>Status:</b> ").append(confirmedXSS ? "CONFIRMED" : "Detected pattern").append("</p>");
             detail.append("<p><b>Confidence Score:</b> ").append(String.format("%.1f", confidenceScore)).append("%</p>");
 
             // Build remediation
@@ -151,13 +159,16 @@ public class EnhancedIssueReporter {
             // Get URL
             URL url = helpers.analyzeRequest(requestResponse).getUrl();
 
+            // CRITICAL: Use createBurpHighlightedMessages() for proper marker creation
+            IHttpRequestResponse[] httpMessages = createBurpHighlightedMessages(requestResponse, vulnerabilityData);
+
             callbacks.printOutput("[IssueReporter] Creating XSS issue for parameter: " + paramName +
                 " (confidence: " + confidence.getDisplayName() + ", severity: " + severity.getDisplayName() + ")");
 
             return new EnhancedScanIssue(
                 requestResponse.getHttpService(),
                 url,
-                new IHttpRequestResponse[] { requestResponse },
+                httpMessages,
                 issueName,
                 detail.toString(),
                 severity,
@@ -825,11 +836,13 @@ public class EnhancedIssueReporter {
                             // Check if we have high-risk vectors that justify reporting without reflection
                             double riskScore = getDouble(vulnerabilityData, "XSS_SCORE", 0.0);
                             double confidenceScore = getDouble(vulnerabilityData, "CONFIDENCE_SCORE", 0.0);
-                            
-                            // CRITICAL: Require VERY HIGH scores (>= 90) to report without payload reflection
-                            // This prevents false positives from pattern matching alone
-                            if (riskScore < 90.0 || confidenceScore < 90.0) {
-                                callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Client-side issue - payload NOT reflected and risk/confidence scores too low (risk: " + riskScore + ", confidence: " + confidenceScore + ") - requiring >= 90 for pattern-only detection");
+                            Boolean confirmed = (Boolean) vulnerabilityData.get("CONFIRMED_XSS");
+
+                            // For confirmed findings with test data, use lower threshold (>= 80)
+                            // Otherwise require >= 90 for pattern-only detection
+                            double threshold = (Boolean.TRUE.equals(confirmed) && testRequestObj != null && testResponseObj != null) ? 80.0 : 90.0;
+                            if (riskScore < threshold || confidenceScore < threshold) {
+                                callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Client-side issue - payload NOT reflected and risk/confidence scores too low (risk: " + riskScore + ", confidence: " + confidenceScore + ") - requiring >= " + threshold + " for detection");
                                 return null;
                             }
                         }
@@ -1797,44 +1810,47 @@ public class EnhancedIssueReporter {
             out.append("Payload details not available.<br>");
         }
 
-        // Reflection Evidence Section
-        out.append("<br><b>Reflection Evidence</b><br>");
-        String reflectionContext = bestContext(vulnerabilityData);
-        String reflectedIn = (String) vulnerabilityData.get("REFLECTED_IN");
-        out.append("<table>");
-        out.append("<tr><td><b>Context:</b></td><td>").append(escapeHtml(formatContext(reflectionContext))).append("</td></tr>");
-        if (reflectedIn != null) {
-            out.append("<tr><td><b>Location:</b></td><td>").append(escapeHtml(reflectedIn)).append("</td></tr>");
-        }
-        out.append("<tr><td><b>Matches:</b></td><td>").append(responseOffsets.isEmpty() ? "None detected" : (responseOffsets.size() + " location(s)")).append("</td></tr>");
-        out.append("</table>");
+        // Reflection Evidence Section (detailed mode only)
+        boolean detailedMode = settings == null || Boolean.TRUE.equals(settings.getDetailedReporting());
+        if (detailedMode) {
+            out.append("<br><b>Reflection Evidence</b><br>");
+            String reflectionContext = bestContext(vulnerabilityData);
+            String reflectedIn = (String) vulnerabilityData.get("REFLECTED_IN");
+            out.append("<table>");
+            out.append("<tr><td><b>Context:</b></td><td>").append(escapeHtml(formatContext(reflectionContext))).append("</td></tr>");
+            if (reflectedIn != null) {
+                out.append("<tr><td><b>Location:</b></td><td>").append(escapeHtml(reflectedIn)).append("</td></tr>");
+            }
+            out.append("<tr><td><b>Matches:</b></td><td>").append(responseOffsets.isEmpty() ? "None detected" : (responseOffsets.size() + " location(s)")).append("</td></tr>");
+            out.append("</table>");
 
-        // Show reflection positions if available
-        if (!responseOffsets.isEmpty()) {
-            out.append("<br><i>Reflection positions in response:</i><br>");
-            for (int i = 0; i < Math.min(responseOffsets.size(), 5); i++) {
-                int[] m = responseOffsets.get(i);
-                if (m != null && m.length >= 2) {
-                    out.append("&nbsp;&nbsp;Position ").append(i + 1).append(": bytes ").append(m[0]).append("-").append(m[1]).append("<br>");
+            // Show reflection positions if available
+            if (!responseOffsets.isEmpty()) {
+                out.append("<br><i>Reflection positions in response:</i><br>");
+                for (int i = 0; i < Math.min(responseOffsets.size(), 5); i++) {
+                    int[] m = responseOffsets.get(i);
+                    if (m != null && m.length >= 2) {
+                        out.append("&nbsp;&nbsp;Position ").append(i + 1).append(": bytes ").append(m[0]).append("-").append(m[1]).append("<br>");
+                    }
+                }
+                if (responseOffsets.size() > 5) {
+                    out.append("&nbsp;&nbsp;<i>...and ").append(responseOffsets.size() - 5).append(" more</i><br>");
                 }
             }
-            if (responseOffsets.size() > 5) {
-                out.append("&nbsp;&nbsp;<i>...and ").append(responseOffsets.size() - 5).append(" more</i><br>");
-            }
-        }
 
-        // Dangerous Characters Section (only if available and meaningful)
-        Object symbolsReflected = vulnerabilityData.get("SYMBOLS_REFLECTED");
-        @SuppressWarnings("unchecked")
-        List<String> reflectedSymbols = (List<String>) vulnerabilityData.get("REFLECTED_SYMBOLS");
-        if (Boolean.TRUE.equals(symbolsReflected) && reflectedSymbols != null && !reflectedSymbols.isEmpty()) {
-            out.append("<br><b>Unfiltered Characters</b><br>");
-            out.append("The following characters were reflected without encoding: <code>");
-            for (int i = 0; i < Math.min(reflectedSymbols.size(), 10); i++) {
-                if (i > 0) out.append(" ");
-                out.append(escapeHtml(reflectedSymbols.get(i)));
+            // Dangerous Characters Section (only if available and meaningful)
+            Object symbolsReflected = vulnerabilityData.get("SYMBOLS_REFLECTED");
+            @SuppressWarnings("unchecked")
+            List<String> reflectedSymbols = (List<String>) vulnerabilityData.get("REFLECTED_SYMBOLS");
+            if (Boolean.TRUE.equals(symbolsReflected) && reflectedSymbols != null && !reflectedSymbols.isEmpty()) {
+                out.append("<br><b>Unfiltered Characters</b><br>");
+                out.append("The following characters were reflected without encoding: <code>");
+                for (int i = 0; i < Math.min(reflectedSymbols.size(), 10); i++) {
+                    if (i > 0) out.append(" ");
+                    out.append(escapeHtml(reflectedSymbols.get(i)));
+                }
+                out.append("</code><br>");
             }
-            out.append("</code><br>");
         }
 
         // Validation Summary Section
@@ -1873,9 +1889,11 @@ public class EnhancedIssueReporter {
         
         // Optional dynamic POC / steps from DOM/client-side engines (preferred over generic guidance)
         // CRITICAL: Only show if we have actual proof, not just pattern matching
+        // Also gated by exploitGeneration setting
+        boolean showExploits = settings == null || Boolean.TRUE.equals(settings.getExploitGeneration());
         String exploitPoc = null;
         String reproSteps = null;
-        if (hasActualProof) {
+        if (hasActualProof && showExploits) {
             exploitPoc = (String) vulnerabilityData.get("EXPLOIT_POC");
             reproSteps = (String) vulnerabilityData.get("REPRODUCTION_STEPS");
             if (exploitPoc != null && !exploitPoc.trim().isEmpty()) {
@@ -1886,7 +1904,7 @@ public class EnhancedIssueReporter {
                 out.append("<br><b>Reproduction steps</b><br>");
                 out.append(formatPlainTextForHtml(reproSteps, 6000)).append("<br>");
             }
-        } else {
+        } else if (!hasActualProof) {
             // No actual proof - don't show misleading exploit POC
             out.append("<br><b>Note:</b> Exploit POC not available - no verified payload reflection detected.<br>");
         }
@@ -1896,30 +1914,32 @@ public class EnhancedIssueReporter {
             reproSteps = (String) vulnerabilityData.get("REPRODUCTION_STEPS");
         }
 
-        // Client-side indicators (useful when payload isn't present in the request/response)
-        Object htObj = vulnerabilityData.get("HIGHLIGHT_TERMS");
-        if (htObj instanceof List) {
-            try {
-                @SuppressWarnings("unchecked")
-                List<String> terms = (List<String>) htObj;
-                if (terms != null && !terms.isEmpty()) {
-                    out.append("<br><b>Client-side indicators</b><br><ul>");
-                    int cap = Math.min(terms.size(), 12);
-                    for (int i = 0; i < cap; i++) {
-                        String t = terms.get(i);
-                        if (t == null || t.trim().isEmpty()) continue;
-                        out.append("<li>").append(escapeHtml(t)).append("</li>");
+        // Client-side indicators and source-sink analysis (detailed mode only)
+        if (detailedMode) {
+            Object htObj = vulnerabilityData.get("HIGHLIGHT_TERMS");
+            if (htObj instanceof List) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    List<String> terms = (List<String>) htObj;
+                    if (terms != null && !terms.isEmpty()) {
+                        out.append("<br><b>Client-side indicators</b><br><ul>");
+                        int cap = Math.min(terms.size(), 12);
+                        for (int i = 0; i < cap; i++) {
+                            String t = terms.get(i);
+                            if (t == null || t.trim().isEmpty()) continue;
+                            out.append("<li>").append(escapeHtml(t)).append("</li>");
+                        }
+                        if (terms.size() > cap) out.append("<li>... and ").append(terms.size() - cap).append(" more</li>");
+                        out.append("</ul>");
                     }
-                    if (terms.size() > cap) out.append("<li>... and ").append(terms.size() - cap).append(" more</li>");
-                    out.append("</ul>");
-                }
-            } catch (Exception ignored) {}
-        }
+                } catch (Exception ignored) {}
+            }
 
-        String sourceSink = (String) vulnerabilityData.get("SOURCE_SINK_ANALYSIS");
-        if (sourceSink != null && !sourceSink.trim().isEmpty()) {
-            out.append("<br><b>Source → Sink analysis</b><br>");
-            out.append(formatPlainTextForHtml(sourceSink, 6000)).append("<br>");
+            String sourceSink = (String) vulnerabilityData.get("SOURCE_SINK_ANALYSIS");
+            if (sourceSink != null && !sourceSink.trim().isEmpty()) {
+                out.append("<br><b>Source → Sink analysis</b><br>");
+                out.append(formatPlainTextForHtml(sourceSink, 6000)).append("<br>");
+            }
         }
 
         // Avoid duplicating engine-provided reproduction steps: only show generic traffic guidance
@@ -1948,6 +1968,14 @@ public class EnhancedIssueReporter {
                                                   ModernArchitectureDetector.ArchitectureAnalysis archAnalysis,
                                                   AdvancedJSONAnalyzer.JSONAnalysisResult jsonAnalysis,
                                                   IHttpRequestResponse requestResponse) {
+        boolean detailedMode = settings == null || Boolean.TRUE.equals(settings.getDetailedReporting());
+
+        if (!detailedMode) {
+            // Compact mode: one-sentence background
+            return "Cross-site scripting (XSS) allows attackers to inject malicious scripts into web pages, " +
+                   "potentially stealing session tokens, performing actions as the victim, or redirecting to malicious sites.";
+        }
+
         StringBuilder out = new StringBuilder();
 
         String reflectionContext = bestContext(vulnerabilityData);
@@ -2005,6 +2033,14 @@ public class EnhancedIssueReporter {
 
     private String generateBurpSafeRemediationDetail(ModernArchitectureDetector.ArchitectureAnalysis archAnalysis,
                                                     AdvancedJSONAnalyzer.JSONAnalysisResult jsonAnalysis) {
+        boolean detailedMode = settings == null || Boolean.TRUE.equals(settings.getDetailedReporting());
+
+        if (!detailedMode) {
+            // Compact mode: brief 2-line remediation
+            return "<b>Remediation:</b> Apply context-appropriate output encoding for all user input. " +
+                   "Implement a strict Content Security Policy (CSP) to mitigate impact.";
+        }
+
         StringBuilder out = new StringBuilder();
 
         out.append("<b>Recommended Remediation</b><br><br>");
@@ -2427,12 +2463,14 @@ public class EnhancedIssueReporter {
     
     private String escapeHtml(String text) {
         if (text == null) return "";
-        
+
         return text.replace("&", "&amp;")
                   .replace("<", "&lt;")
                   .replace(">", "&gt;")
                   .replace("\"", "&quot;")
-                   .replace("'", "&#39;");
+                  .replace("'", "&#39;")
+                  .replace("`", "&#96;")
+                  .replace("/", "&#47;");
     }
     
     private String generateIssueBackground(Map<String, Object> vulnerabilityData,

