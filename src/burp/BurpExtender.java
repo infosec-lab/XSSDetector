@@ -1580,7 +1580,9 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                     }
                     detail.append("<li>Open the attacker page in the same browser session to trigger the exploit.</li>\n");
                     detail.append("<li>Verify JavaScript execution in the target page context (check browser console).</li>\n");
-                } else if (vuln.parameter != null && !"Multiple".equals(vuln.parameter) && !"N/A".equals(vuln.parameter)) {
+                } else if (vuln.parameter != null && !vuln.parameter.trim().isEmpty()
+                        && !"Multiple".equalsIgnoreCase(vuln.parameter.trim())
+                        && !vuln.parameter.toUpperCase().contains("N/A")) {
                     // Server-side reflected vulnerability with a specific parameter
                     detail.append("<li>Send a <b>").append(method).append("</b> request to: <code>").append(escapeHtml(targetDisplay)).append("</code></li>\n");
                     detail.append("<li>Set the <b>").append(escapeHtml(vuln.parameter)).append("</b> parameter");
@@ -1613,11 +1615,17 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
 
                 @Override
                 public String getIssueName() {
-                    String issueName = "Cross-site Scripting - " + vuln.type;
+                    // Clean, professional name: "Cross-Site Scripting (<vector>)"
+                    // optionally with sink/parameter, but never the ugly "(N/A ...)" suffix.
+                    String issueName = "Cross-Site Scripting (" + vuln.type + ")";
                     if (vuln.sinkType != null && !vuln.sinkType.isEmpty()) {
                         issueName += " via " + vuln.sinkType;
                     }
-                    issueName += " (" + vuln.parameter + ")";
+                    if (vuln.parameter != null && !vuln.parameter.trim().isEmpty()
+                            && !vuln.parameter.toUpperCase().contains("N/A")
+                            && !"Multiple".equalsIgnoreCase(vuln.parameter.trim())) {
+                        issueName += " - parameter '" + vuln.parameter + "'";
+                    }
                     return issueName;
                 }
 

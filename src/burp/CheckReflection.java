@@ -343,9 +343,10 @@ public class CheckReflection {
                                 if (!testPayload.contains("%") || !isValidURLEncoded(testPayload)) {
                                     // Not URL-encoded or invalid encoding - encode it
                                     String urlEncodedPayload = helpers.urlEncode(testPayload);
-                                    callbacks.printOutput("[CheckReflection] URL-encoding payload for URL parameter '" + paramName + "': " + 
-                                        testPayload.substring(0, Math.min(30, testPayload.length())) + " -> " + 
-                                        urlEncodedPayload.substring(0, Math.min(30, urlEncodedPayload.length())));
+                                    if (settings != null && settings.getVerboseLogging())
+                                        callbacks.printOutput("[CheckReflection] URL-encoding payload for URL parameter '" + paramName + "': " +
+                                            testPayload.substring(0, Math.min(30, testPayload.length())) + " -> " +
+                                            urlEncodedPayload.substring(0, Math.min(30, urlEncodedPayload.length())));
                                     testPayload = urlEncodedPayload;
                                 }
                             } catch (Exception e) {
@@ -396,16 +397,19 @@ public class CheckReflection {
                         // Create test request with context-aware encoded XSS payload
                         byte[] testRequest = createTestRequest(requestResponse, paramName, testPayload);
 
-                        // DEBUG: Log the payload being tested
-                        callbacks.printOutput("[CheckReflection] Testing parameter: " + paramName +
-                            " | Payload: " + testPayload.substring(0, Math.min(50, testPayload.length())) +
-                            " | Is URL param: " + isURLParameter);
+                        // Log the payload being tested (verbose only)
+                        boolean verbose = settings != null && settings.getVerboseLogging();
+                        if (verbose) {
+                            callbacks.printOutput("[CheckReflection] Testing parameter: " + paramName +
+                                " | Payload: " + testPayload.substring(0, Math.min(50, testPayload.length())) +
+                                " | Is URL param: " + isURLParameter);
+                        }
 
                         if (testRequest != null && testRequest.length > 0) {
-                            // DEBUG: Log request being sent
+                            // Log request being sent (verbose only)
                             String reqPreview = new String(testRequest, StandardCharsets.UTF_8);
                             int queryIdx = reqPreview.indexOf("?");
-                            if (queryIdx > 0) {
+                            if (verbose && queryIdx > 0) {
                                 int endIdx = reqPreview.indexOf(" ", queryIdx);
                                 if (endIdx < 0) endIdx = Math.min(queryIdx + 100, reqPreview.length());
                                 callbacks.printOutput("[CheckReflection] Request URL: " + reqPreview.substring(queryIdx, Math.min(endIdx, reqPreview.length())));
@@ -462,11 +466,13 @@ public class CheckReflection {
                                         if (decodedPayload != null && !decodedPayload.equals(testPayload)) {
                                             if (responseBody.contains(decodedPayload)) {
                                                 payloadFound = true;
-                                                callbacks.printOutput("[CheckReflection] DECODED PAYLOAD REFLECTED: '" +
-                                                    decodedPayload.substring(0, Math.min(40, decodedPayload.length())) + "'");
+                                                if (settings != null && settings.getVerboseLogging()) {
+                                                    callbacks.printOutput("[CheckReflection] Decoded payload reflected: '" +
+                                                        decodedPayload.substring(0, Math.min(40, decodedPayload.length())) + "'");
+                                                }
                                             } else {
-                                                // DEBUG: Show what we're looking for
-                                                callbacks.printOutput("[CheckReflection] DEBUG: Looking for decoded payload: '" +
+                                                if (settings != null && settings.getVerboseLogging())
+                                                    callbacks.printOutput("[CheckReflection] Looking for decoded payload: '" +
                                                     decodedPayload.substring(0, Math.min(40, decodedPayload.length())) + "' - NOT FOUND");
                                             }
                                         }
@@ -475,11 +481,10 @@ public class CheckReflection {
                                     }
                                 }
 
-                                // DEBUG: Log reflection status
-                                if (!payloadFound && !payloadReflected) {
-                                    callbacks.printOutput("[CheckReflection] DEBUG: No reflection found for param: " + paramName);
-                                    // Show small sample of response
-                                    callbacks.printOutput("[CheckReflection] DEBUG: Response sample (first 200 chars): " +
+                                // Log reflection status (verbose only)
+                                if (!payloadFound && !payloadReflected && settings != null && settings.getVerboseLogging()) {
+                                    callbacks.printOutput("[CheckReflection] No reflection found for param: " + paramName);
+                                    callbacks.printOutput("[CheckReflection] Response sample (first 200 chars): " +
                                         responseBody.substring(0, Math.min(200, responseBody.length())).replace("\n", " "));
                                 }
                                 
@@ -934,13 +939,15 @@ public class CheckReflection {
                 try {
                     // Check if payload is already URL-encoded (contains %XX patterns)
                     String urlEncodedPayload = payload;
+                    boolean verboseUrl = settings != null && settings.getVerboseLogging();
                     if (!isValidURLEncoded(payload)) {
                         // Payload is NOT URL-encoded - encode it
                         urlEncodedPayload = helpers.urlEncode(payload);
-                        callbacks.printOutput("[CheckReflection] URL-encoding payload for URL parameter '" + paramName + "': " + 
-                            payload.substring(0, Math.min(30, payload.length())) + " -> " + 
-                            urlEncodedPayload.substring(0, Math.min(50, urlEncodedPayload.length())));
-                    } else {
+                        if (verboseUrl)
+                            callbacks.printOutput("[CheckReflection] URL-encoding payload for URL parameter '" + paramName + "': " +
+                                payload.substring(0, Math.min(30, payload.length())) + " -> " +
+                                urlEncodedPayload.substring(0, Math.min(50, urlEncodedPayload.length())));
+                    } else if (verboseUrl) {
                         callbacks.printOutput("[CheckReflection] Payload already URL-encoded for parameter: " + paramName);
                     }
                     
@@ -970,7 +977,8 @@ public class CheckReflection {
                     
                     if (needsManualFix) {
                         // buildParameter decoded it - manually fix the URL in the request string
-                        callbacks.printOutput("[CheckReflection] MANUALLY FIXING: URL-encoded parameter '" + paramName + "' in GET request");
+                        if (settings != null && settings.getVerboseLogging())
+                            callbacks.printOutput("[CheckReflection] Re-applying URL encoding for parameter '" + paramName + "' in GET request");
                         
                         // Extract URL parts from request string
                         String requestStr = new String(modifiedRequest, StandardCharsets.UTF_8);
@@ -1016,7 +1024,8 @@ public class CheckReflection {
                                 String fixedRequest = methodLine + fixedUrlPath + restOfRequest;
                                 modifiedRequest = fixedRequest.getBytes(StandardCharsets.UTF_8);
                                 
-                                callbacks.printOutput("[CheckReflection] Fixed URL in request: " + fixedUrlPath.substring(0, Math.min(100, fixedUrlPath.length())));
+                                if (settings != null && settings.getVerboseLogging())
+                                    callbacks.printOutput("[CheckReflection] Fixed URL in request: " + fixedUrlPath.substring(0, Math.min(100, fixedUrlPath.length())));
                             }
                         }
                     }

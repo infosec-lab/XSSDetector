@@ -2297,8 +2297,10 @@ public class EnhancedAggressive {
             if (responseCache != null && baseRequestResponse != null && paramName != null) {
                 ResponseCache.CachedResponse cached = responseCache.checkCache(baseRequestResponse, paramName, payload, helpers);
                 if (cached != null) {
-                    // Use cached result
-                    callbacks.printOutput("[XSSDetector] Using cached result for parameter: " + paramName);
+                    // Use cached result (verbose only - this fires once per cached payload)
+                    if (settings != null && settings.getVerboseLogging()) {
+                        callbacks.printOutput("[XSSDetector] Using cached result for parameter: " + paramName);
+                    }
                     if (cached.isVulnerable) {
                         // CRITICAL: Verify cached result still has payload reflection
                         // Cached results might be stale, so re-verify reflection
@@ -5406,6 +5408,13 @@ public class EnhancedAggressive {
             // CRITICAL: URL parameters MUST ALWAYS be URL-encoded
             // This check is done FIRST before any other context checks
             if (paramType == IParameter.PARAM_URL) {
+                // IDEMPOTENCY GUARD: if the payload already contains percent-encoding
+                // (e.g. a pre-encoded WAF-bypass payload such as <img%2bsrc%3dx...>),
+                // re-encoding would corrupt it (%3d -> %253d) and the payload would no
+                // longer execute, silently suppressing real findings. Send it as-is.
+                if (java.util.regex.Pattern.compile("%[0-9A-Fa-f]{2}").matcher(payload).find()) {
+                    return payload;
+                }
                 // For URL parameters, ALWAYS URL-encode special characters
                 // Modern browsers automatically URL-encode special chars in URLs
                 // Only exception: if payload is already a complete URL protocol (javascript:, data:, etc.)
@@ -5425,9 +5434,9 @@ public class EnhancedAggressive {
                 }
                 // Standard URL parameter - ALWAYS fully URL-encode
                 String encoded = helpers.urlEncode(payload);
-                if (!encoded.equals(payload)) {
-                    callbacks.printOutput("[XSSDetector] encodePayloadForContext: URL parameter encoded: " + 
-                                        payload.substring(0, Math.min(30, payload.length())) + " -> " + 
+                if (!encoded.equals(payload) && settings != null && settings.getVerboseLogging()) {
+                    callbacks.printOutput("[XSSDetector] encodePayloadForContext: URL parameter encoded: " +
+                                        payload.substring(0, Math.min(30, payload.length())) + " -> " +
                                         encoded.substring(0, Math.min(50, encoded.length())));
                 }
                 return encoded;

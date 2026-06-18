@@ -326,13 +326,18 @@ public class ModernXSSAnalyzer {
                 // Check if parameter name matches or if we can inject HTML with name/id
                 for (IParameter param : params) {
                     String paramValue = param.getValue();
-                    if (paramValue != null && (
+                    boolean looksLikeHtmlInjection = paramValue != null && (
                         paramValue.toLowerCase().contains("<form") ||
                         paramValue.toLowerCase().contains("<input") ||
                         paramValue.toLowerCase().contains("<img") ||
                         paramValue.toLowerCase().contains("<a ") ||
                         paramValue.contains("name=") ||
-                        paramValue.contains("id="))) {
+                        paramValue.contains("id="));
+
+                    // TRUE-POSITIVE GATE: only report when the injected markup is actually
+                    // reflected UNSANITIZED (verbatim) in the response body. If the app
+                    // entity-encoded or stripped it, the element cannot clobber anything.
+                    if (looksLikeHtmlInjection && responseBody != null && responseBody.contains(paramValue)) {
 
                         // Detect what unsafe property is used after the clobbered access
                         String sinkUsed = null;
@@ -367,32 +372,11 @@ public class ModernXSSAnalyzer {
                 }
             }
 
-            // Also check for existing form/input elements that could be exploited
-            Pattern existingElements = Pattern.compile(
-                "<(form|input|img|a|embed|object)\\s+[^>]*(?:name|id)\\s*=\\s*['\"]?(\\w+)['\"]?",
-                Pattern.CASE_INSENSITIVE
-            );
-            Set<String> reportedExistingElements = new HashSet<>();
-            Matcher elemMatcher = existingElements.matcher(responseBody);
-            while (elemMatcher.find()) {
-                String elementName = elemMatcher.group(2);
-                if (vulnerableProperties.contains(elementName) && !reportedExistingElements.contains(elementName)) {
-                    reportedExistingElements.add(elementName);
-                    VulnerabilityInfo vuln = new VulnerabilityInfo();
-                    vuln.type = "DOM Clobbering (Existing Element)";
-                    vuln.severity = "Medium";
-                    vuln.confidence = 85.0;
-                    vuln.description = "Existing element with name/id='" + elementName +
-                                      "' may clobber JavaScript property access";
-                    vuln.parameter = "N/A (existing element)";
-                    vuln.targetUrl = targetUrl;
-                    vuln.evidence = propertyEvidence.get(elementName);
-                    vuln.payload = "Element already exists: <" + elemMatcher.group(1) + " name=\"" + elementName + "\">";
-                    vuln.remediation = "Rename element or use explicit DOM selection methods.";
-                    vuln.httpMethod = extractHttpMethod(requestResponse);
-                    vulns.add(vuln);
-                }
-            }
+            // NOTE: We deliberately do NOT report pre-existing form/input elements that
+            // happen to match an accessed property. Those are the application's own markup
+            // with no attacker-controlled injection point, so flagging them produces false
+            // positives (e.g. <form name="login"> used by the page's own setfocus()). DOM
+            // Clobbering is only reported above when attacker input is reflected unsanitized.
 
         } catch (Exception e) {
             callbacks.printError("[DOMClobbering] Error: " + e.getMessage());
