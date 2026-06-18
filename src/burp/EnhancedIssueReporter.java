@@ -127,10 +127,14 @@ public class EnhancedIssueReporter {
                 }
             }
 
-            // Build issue name
+            // Build issue name (include parameter so distinct params are distinct
+            // issues and the dedup key can tell instances apart)
             String issueName = "Cross-site Scripting (Reflected)";
             if (reflectionContext != null && !reflectionContext.isEmpty()) {
-                issueName = "Cross-site Scripting (Reflected) - " + reflectionContext;
+                issueName += " - " + reflectionContext;
+            }
+            if (paramName != null && !paramName.trim().isEmpty()) {
+                issueName += " - " + paramName;
             }
 
             // Build issue detail

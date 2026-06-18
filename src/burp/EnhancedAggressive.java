@@ -958,14 +958,13 @@ public class EnhancedAggressive {
                             }
 
                             if (issue != null) {
+                                // Add to the returned list ONLY. Central reporting + deduplication
+                                // happens in BurpExtender.reportIssueWithDedup; reporting directly
+                                // here bypasses dedup and double-reports the same finding.
                                 issues.add(issue);
-                                // CRITICAL: Also directly report to Burp
-                                try {
-                                    callbacks.addScanIssue(issue);
-                                    callbacks.printOutput("[EnhancedAggressive] ISSUE REPORTED: " + insertionPointName +
+                                if (settings != null && settings.getVerboseLogging()) {
+                                    callbacks.printOutput("[EnhancedAggressive] Issue queued: " + insertionPointName +
                                         " (confidence: " + confidenceScore + "%)");
-                                } catch (Exception ex) {
-                                    callbacks.printOutput("[EnhancedAggressive] Issue added to list: " + insertionPointName);
                                 }
                             }
 

@@ -1172,22 +1172,20 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         // Issue type/name
         key.append("|").append(issue.getIssueName() != null ? issue.getIssueName() : "unknown");
 
-        // Extract parameter from issue detail if possible
+        // Extract parameter from issue name (falls back to detail).
         String param = extractParameterFromIssueName(issue.getIssueName());
-        if (param != null) {
+        if (param == null || param.isEmpty()) {
+            param = extractParameterFromDetail(issue.getIssueDetail());
+        }
+        if (param != null && !param.isEmpty()) {
             key.append("|").append(param);
         }
 
-        // Also try to extract from issue detail
-        String detail = issue.getIssueDetail();
-        if (detail != null) {
-            String payloadKey = extractPayloadFromDetail(detail);
-            if (payloadKey != null && payloadKey.length() > 10) {
-                // Use first 50 chars of payload as part of key
-                key.append("|").append(payloadKey.substring(0, Math.min(50, payloadKey.length())));
-            }
-        }
-
+        // NOTE: the payload is deliberately NOT part of the key. One vulnerable
+        // (URL, type, parameter) is a single instance, no matter how many payload
+        // variants confirm it - otherwise the same finding is reported once per
+        // payload. Distinct parameters/types still produce distinct keys, so genuine
+        // multiple instances are reported separately.
         return key.toString();
     }
 
@@ -1227,6 +1225,27 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             case "information": return 0;
             default: return 0;
         }
+    }
+
+    /**
+     * Extract the parameter name from issue detail HTML, supporting both the
+     * "<b>Parameter:</b> value" and "<b>Parameter</b></td><td>value</td>" formats.
+     * Used as a fallback for the dedup key when the issue name omits the parameter.
+     */
+    private String extractParameterFromDetail(String detail) {
+        if (detail == null) return null;
+        try {
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                "Parameter(?:/Locations)?\\s*:?\\s*</b>\\s*(?:</td>\\s*<td>)?\\s*([^<]{1,80})",
+                java.util.regex.Pattern.CASE_INSENSITIVE).matcher(detail);
+            if (m.find()) {
+                String v = m.group(1).trim();
+                if (!v.isEmpty() && !v.equalsIgnoreCase("N/A")) {
+                    return v;
+                }
+            }
+        } catch (Exception ignored) {}
+        return null;
     }
 
     /**

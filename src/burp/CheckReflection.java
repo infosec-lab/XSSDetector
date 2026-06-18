@@ -865,14 +865,13 @@ public class CheckReflection {
                         }
 
                         if (issue != null) {
+                            // Add to the returned list ONLY. Central reporting + deduplication
+                            // happens in BurpExtender.reportIssueWithDedup; reporting directly
+                            // here bypasses dedup and double-reports the same finding.
                             issues.add(issue);
-                            // CRITICAL: Also directly report to Burp to ensure it's captured
-                            try {
-                                callbacks.addScanIssue(issue);
-                                callbacks.printOutput("[CheckReflection] ISSUE REPORTED for parameter: " + paramName +
+                            if (settings != null && settings.getVerboseLogging()) {
+                                callbacks.printOutput("[CheckReflection] Issue queued for parameter: " + paramName +
                                     " (confidence: " + confScore + "%, reflected: " + payloadWasReflected + ")");
-                            } catch (Exception e) {
-                                callbacks.printOutput("[CheckReflection] Issue added to list (direct reporting failed): " + paramName);
                             }
                         } else {
                             // Log why issue creation failed
