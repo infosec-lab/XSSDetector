@@ -1,7 +1,7 @@
 @echo off
 rem ------------------------------------------------------------
 rem  XSSDetector – Build Script (Windows)
-rem  Version: 2025.1.0 (AI Edition)
+rem  Version: 2.0.0 (AI Edition)
 rem ------------------------------------------------------------
 
 rem === Configuration =========================================

@@ -8,30 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.0.0] - 2025-01-20 - Production Ready Release
 
 ### 🚀 Added
-- **AI-Powered Context Analysis**: Intelligent payload selection based on response context
-- **Real Exploit Validation**: Actual vulnerability confirmation, not just reflection detection
-- **Modern Framework Support**: React, Angular, Vue.js, GraphQL, WebSockets detection
-- **Advanced WAF Bypass**: 50+ evasion techniques for modern security solutions
+- **Context-Aware Analysis**: Payload selection driven by the detected reflection context
+- **Reflection & Exploit Validation**: Confirms unencoded reflection before reporting
+- **Modern Framework Awareness**: React, Angular, Vue.js, GraphQL, WebSocket detection
+- **WAF/Filter Bypass**: Encoding and mutation evasion techniques
 - **DOM XSS Detection**: Client-side vulnerability identification with source/sink analysis
 - **Polyglot Payloads**: Multi-context attack vectors for maximum coverage
 - **Encoding Bypass Techniques**: Unicode, Base64, URL encoding variants
 - **Template Injection**: Server-side and client-side template attacks
-- **Modern Browser APIs**: WebRTC, Service Workers, WebAssembly exploitation
-- **Session Handling**: Automatic CSRF token and session management
-- **Compliance Reporting**: OWASP, NIST, GDPR compliance validation
-- **Detailed Analytics**: Real-time scanning statistics and performance metrics
-- **Export Capabilities**: HTML, JSON, CSV, XML report formats
-- **Integration Support**: Burp Intruder, Repeater, and Scanner integration
-- **Advanced UI**: Dark mode, accessibility features, keyboard navigation
-- **Performance Optimization**: Multi-threading, caching, batch processing
+- **Modern Browser API Heuristics**: Optional Service Worker / WebAssembly / Shadow DOM payload options
+- **Session Handling**: CSRF token and session management for authenticated scans
+- **Detailed HTML Reports**: Exploit PoC, steps to reproduce, impact and remediation
+- **Confidence Scoring**: Per-finding confidence with a configurable reporting threshold
+- **Burp Integration**: Passive scanner, active scanner, and real-time proxy analysis
+- **Performance Controls**: Configurable threading, response caching, large-response guard
 - **Error Recovery**: Robust error handling and recovery mechanisms
 
 ### 🔧 Changed
-- **Complete Codebase Refactor**: Modernized architecture for better maintainability
-- **Enhanced Performance**: 1000+ requests/minute scanning capability
-- **Improved Accuracy**: 95%+ detection rate with <2% false positives
-- **Better Memory Management**: <50MB RAM usage during active scanning
-- **Streamlined UI**: Intuitive interface with advanced configuration options
+- **Codebase Refactor**: Modular, single-responsibility detection engines
+- **Improved Accuracy**: Multi-layer validation to reduce false positives
+- **Streamlined UI**: Configuration tab with detection and encoding options
 - **Comprehensive Documentation**: Detailed inline code documentation
 
 ### 🐛 Fixed
@@ -82,7 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Version 2.0.0 (Current)
 - **Status**: Production Ready
 - **Release Date**: January 20, 2025
-- **Key Features**: AI-powered analysis, modern framework support, real exploit validation
+- **Key Features**: Context-aware analysis, modern framework awareness, reflection-validated findings
 
 ### Version 1.5.0
 - **Status**: Beta

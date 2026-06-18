@@ -83,7 +83,7 @@ performActiveXSSDetection()     // Multi-engine active scan
 4. `CheckReflection` - Core reflection detection
 5. `ModernArchitectureDetector` - Architecture analysis
 6. `AdvancedJSONAnalyzer` - JSON analysis
-7. `AIContextAnalyzer` - AI-powered context analysis
+7. `AIContextAnalyzer` - Heuristic (machine-learning-inspired) context analysis
 8. `EngineIntegrationManager` - Engine orchestration
 9. Enhanced engines (DOM XSS, Client-Side, Aggressive, Filtering)
 

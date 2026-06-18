@@ -1,4 +1,4 @@
-name: Production Release - XSSDetector 2025.1.0
+name: Production Release - XSSDetector 2.0.0
 
 on:
   release:
@@ -8,7 +8,7 @@ on:
       version:
         description: 'Release version'
         required: true
-        default: '2025.1.0'
+        default: '2.0.0'
       release_notes:
         description: 'Release notes'
         required: false
@@ -28,7 +28,6 @@ jobs:
       with:
         java-version: 11
         distribution: 'temurin'
-        cache: maven
         
     - name: Production compilation check
       run: |
@@ -81,7 +80,7 @@ jobs:
     - name: Upload production JAR
       uses: actions/upload-artifact@v4
       with:
-        name: XSSDetector-Production-2025.1.0
+        name: XSSDetector-Production-2.0.0
         path: dist/XSSDetector.jar
         retention-days: 365
         
@@ -178,7 +177,7 @@ jobs:
         echo "📚 Verifying documentation..."
         
         # Check required documentation files
-        REQUIRED_FILES=("README.md" "LICENSE" "CHANGELOG.md" "INSTALLATION_GUIDE.md" "TECHNICAL_SPECIFICATIONS.md")
+        REQUIRED_FILES=("README.md" "LICENSE" "CHANGELOG.md" "INSTALLATION.md" "SECURITY.md")
         
         for file in "${REQUIRED_FILES[@]}"; do
           if [ -f "$file" ]; then
@@ -218,124 +217,120 @@ jobs:
     - name: Download production JAR
       uses: actions/download-artifact@v4
       with:
-        name: XSSDetector-Production-2025.1.0
+        name: XSSDetector-Production-2.0.0
         path: ./release
         
     - name: Create release package
       run: |
         echo "📦 Creating release package..."
-        mkdir -p XSSDetector-2025.1.0
+        mkdir -p XSSDetector-2.0.0
         
         # Copy JAR file
-        cp release/XSSDetector.jar XSSDetector-2025.1.0/
+        cp release/XSSDetector.jar XSSDetector-2.0.0/
         
         # Copy documentation
-        cp README.md XSSDetector-2025.1.0/
-        cp LICENSE XSSDetector-2025.1.0/
-        cp CHANGELOG.md XSSDetector-2025.1.0/
-        cp INSTALLATION_GUIDE.md XSSDetector-2025.1.0/
-        cp TECHNICAL_SPECIFICATIONS.md XSSDetector-2025.1.0/
-        cp SECURITY.md XSSDetector-2025.1.0/
-        cp CONTRIBUTING.md XSSDetector-2025.1.0/
+        cp README.md XSSDetector-2.0.0/
+        cp LICENSE XSSDetector-2.0.0/
+        cp CHANGELOG.md XSSDetector-2.0.0/
+        cp INSTALLATION.md XSSDetector-2.0.0/
+        cp SECURITY.md XSSDetector-2.0.0/
+        cp CONTRIBUTING.md XSSDetector-2.0.0/
         
         # Copy build scripts
-        cp build.bat XSSDetector-2025.1.0/
-        cp build.sh XSSDetector-2025.1.0/
+        cp build.bat XSSDetector-2.0.0/
+        cp build.sh XSSDetector-2.0.0/
         
                  # Create release notes
-         echo "# XSSDetector 2025.1.0 - Production Release" > XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "## Production Ready Release" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "This is the official production release of XSSDetector 2025.1.0, featuring comprehensive XSS detection capabilities with a professional user interface." >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "## Key Features" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Advanced XSS Detection: 50+ advanced payloads and techniques" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Analysis Engine: AI-powered context analysis and behavioral detection" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Response Analysis: Comprehensive response time and security analysis" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Professional UI: Real-time analytics and status monitoring" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- WAF Bypass: Multiple bypass techniques for modern security" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Modern Framework Support: React, Angular, Vue.js, and more" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Performance Optimized: Efficient algorithms and thread management" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "## Installation" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "1. Download XSSDetector.jar" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "2. Open Burp Suite Professional" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "3. Go to Extender -> Extensions -> Add" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "4. Select Java and browse to the JAR file" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "5. Click Add" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "## System Requirements" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Burp Suite Professional 2024+" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Java 8 or higher" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- 512MB RAM minimum" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Windows/macOS/Linux" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "## Build Instructions" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "Windows: .\\build.bat" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "Unix/Linux/macOS: ./build.sh" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "## Performance Metrics" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- JAR Size: 344KB" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Memory Usage: Optimized for production" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Thread Count: Maximum 5 concurrent threads" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Scan Speed: Intelligent throttling and optimization" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "## Security Features" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Input Validation: Comprehensive parameter validation" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Error Handling: Graceful degradation and recovery" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- OWASP Compliance: Follows OWASP security guidelines" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- GDPR Compliance: Privacy-aware implementation" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "## Documentation" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- README.md - Quick start guide" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- INSTALLATION_GUIDE.md - Detailed installation instructions" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- TECHNICAL_SPECIFICATIONS.md - Technical documentation" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- CHANGELOG.md - Version history and changes" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- SECURITY.md - Security policy and reporting" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "## Support" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Issues: Report via GitHub Issues" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Security: Report via SECURITY.md" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "- Contributions: See CONTRIBUTING.md" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "## License" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "MIT License - see LICENSE file for details" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "---" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
-         echo "XSSDetector 2025.1.0 - Professional XSS Detection for Burp Suite" >> XSSDetector-2025.1.0/RELEASE_NOTES.md
+         echo "# XSSDetector 2.0.0 - Production Release" > XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "## Production Ready Release" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "This is the official production release of XSSDetector 2.0.0, featuring comprehensive XSS detection capabilities with a professional user interface." >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "## Key Features" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- XSS Detection: Context-aware payloads with reflection validation" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- Analysis Engine: Heuristic context analysis (HTML/attribute/JS/CSS/URL)" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- DOM XSS: Client-side source-to-sink data-flow analysis" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- Reporting: Detailed HTML issue reports with steps to reproduce" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- WAF/Filter Bypass: Encoding and mutation evasion techniques" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- Modern Framework Awareness: React, Angular, Vue.js, GraphQL, WebSockets" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- Performance Controls: Configurable threading, caching, dedup" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "## Installation" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "1. Download XSSDetector.jar" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "2. Open Burp Suite Professional" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "3. Go to Extender -> Extensions -> Add" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "4. Select Java and browse to the JAR file" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "5. Click Add" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "## System Requirements" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- Burp Suite Professional 2023.1+" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- Java 11 or higher" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- Windows/macOS/Linux" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "## Build Instructions" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "Windows: .\\build.bat" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "Unix/Linux/macOS: ./build.sh" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "## Performance" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- Configurable thread pool for active/encoding checks" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- Response caching and deduplication" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- Large-response guard (skips responses over 10 MB)" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- Rate-limit awareness (backs off on HTTP 429)" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "## Robustness" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- Input Validation: Settings bounds checking" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- Error Handling: Graceful degradation and recovery" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "## Documentation" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- README.md - Quick start guide" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- INSTALLATION.md - Detailed installation instructions" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- ARCHITECTURE_MAPPING.md - Architecture and logic mapping" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- CHANGELOG.md - Version history and changes" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- SECURITY.md - Security policy and reporting" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "## Support" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- Issues: Report via GitHub Issues" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- Security: Report via SECURITY.md" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "- Contributions: See CONTRIBUTING.md" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "## License" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "MIT License - see LICENSE file for details" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "---" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
+         echo "XSSDetector 2.0.0 - Professional XSS Detection for Burp Suite" >> XSSDetector-2.0.0/RELEASE_NOTES.md
         
         # Create ZIP archive
-        zip -r XSSDetector-2025.1.0.zip XSSDetector-2025.1.0/
+        zip -r XSSDetector-2.0.0.zip XSSDetector-2.0.0/
         
-        echo "✅ Release package created: XSSDetector-2025.1.0.zip"
+        echo "✅ Release package created: XSSDetector-2.0.0.zip"
         
     - name: Upload release assets
       uses: actions/upload-artifact@v4
       with:
-        name: XSSDetector-Release-2025.1.0
+        name: XSSDetector-Release-2.0.0
         path: |
-          XSSDetector-2025.1.0.zip
-          XSSDetector-2025.1.0/XSSDetector.jar
+          XSSDetector-2.0.0.zip
+          XSSDetector-2.0.0/XSSDetector.jar
         retention-days: 365
         
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          XSSDetector-2025.1.0.zip
-          XSSDetector-2025.1.0/XSSDetector.jar
-        body_path: XSSDetector-2025.1.0/RELEASE_NOTES.md
+          XSSDetector-2.0.0.zip
+          XSSDetector-2.0.0/XSSDetector.jar
+        body_path: XSSDetector-2.0.0/RELEASE_NOTES.md
         draft: false
         prerelease: false
         generate_release_notes: true

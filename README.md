@@ -21,33 +21,33 @@
 - [Quick Start](#quick-start)
 - [Advanced Features](#advanced-features)
 - [Detection Capabilities](#detection-capabilities)
-- [Performance & Statistics](#performance--statistics)
+- [Performance](#performance)
 - [Development](#development)
 - [Contributing](#contributing)
 - [License](#license)
-- [Author](#author)
+- [Credits](#credits)
 
 ## Features
 
 ### Core Detection Engine
-- **AI-Powered Context Analysis** - Intelligent payload selection based on response context
-- **Real Exploit Validation** - Actual vulnerability confirmation, not just reflection detection
-- **Modern Framework Support** - React, Angular, Vue.js, GraphQL, WebSockets
-- **Advanced WAF Bypass** - 50+ evasion techniques for modern security solutions
-- **DOM XSS Detection** - Client-side vulnerability identification
+- **Context-Aware Analysis** - Payload selection driven by reflection context (HTML, attribute, JS, CSS, URL)
+- **Reflection & Exploit Validation** - Confirms payloads are reflected unencoded before reporting, reducing false positives
+- **Modern Framework Awareness** - Detects React, Angular, Vue.js, GraphQL and WebSocket usage to tune analysis
+- **WAF/Filter Bypass** - Encoding and mutation techniques to get past common input filters
+- **DOM XSS Detection** - Source-to-sink data-flow analysis for client-side sinks
 
 ### Advanced Capabilities
 - **Polyglot Payloads** - Multi-context attack vectors
-- **Encoding Bypass Techniques** - Unicode, Base64, URL encoding variants
-- **Template Injection** - Server-side and client-side template attacks
-- **Modern Browser APIs** - WebRTC, Service Workers, WebAssembly exploitation
-- **Session Handling** - Automatic CSRF token and session management
+- **Encoding Techniques** - Unicode, Base64, and URL encoding variants
+- **Template Injection Detection** - Client-side template and expression patterns
+- **Modern Browser API Heuristics** - Optional Service Worker / WebAssembly / Shadow DOM payload options
+- **Session Handling** - CSRF token and session management for authenticated scans
 
-### Professional Features
-- **Compliance Reporting** - OWASP, NIST, GDPR compliance validation
-- **Detailed Analytics** - Real-time scanning statistics and performance metrics
-- **Export Capabilities** - HTML, JSON, CSV, XML report formats
-- **Integration Support** - Burp Intruder, Repeater, and Scanner integration
+### Reporting & Integration
+- **Detailed HTML Issue Reports** - Payload, reflection context, exploit PoC, steps to reproduce, impact and remediation
+- **Confidence Scoring** - Each finding carries a confidence score with a configurable reporting threshold
+- **Deduplication** - Filters duplicate findings across passive/active scans
+- **Burp Integration** - Passive scanner, active scanner, and real-time proxy analysis
 
 ## Screenshots
 
@@ -100,13 +100,13 @@
    - Verify the extension loads without errors in the **Extender** > **Output** tab
 
 ### Automated Build (GitHub Actions)
-The project includes automated CI/CD pipelines that build and test the extension on multiple platforms:
+A GitHub Actions workflow compiles the extension and produces the JAR on every
+push and pull request:
 
 ```yaml
-# Build matrix includes:
+# Build matrix:
 # - Operating Systems: Ubuntu, Windows, macOS
-# - Java Versions: 8, 11, 17
-# - Automated testing and security scanning
+# - Java Versions: 11, 17
 ```
 
 ## Quick Start
@@ -116,11 +116,13 @@ The project includes automated CI/CD pipelines that build and test the extension
    - Set your target application in Burp Suite's scope
    - Enable "Scope only" in XSSDetector settings
 
-2. **Select Detection Mode**
-   - **Basic Mode**: Standard XSS detection
-   - **Advanced Mode**: Enhanced with modern techniques
-   - **Professional Mode**: Full feature set with AI analysis
-   - **Expert Mode**: Maximum detection with custom payloads
+2. **Configure Detection Options**
+   In the **XSSDetector** tab, enable the checks you need:
+   - **Modern Detection**: Framework-aware (React/Angular/Vue/GraphQL/WebSocket) analysis
+   - **DOM XSS Detection**: Client-side source-to-sink analysis
+   - **Aggressive/Active Scanning**: Sends payloads with encoding and filter-bypass variants
+   - **Encoding Options**: Unicode, Base64, and URL encoding toggles
+   - **Scope Only**: Restrict scanning to your Burp target scope
 
 3. **Start Scanning**
    - Use Burp Suite's **Active Scanner** or **Spider**
@@ -155,10 +157,10 @@ enableEncodingOptimization.setSelected(true);
 
 ## Advanced Features
 
-### AI-Powered Analysis
-- **Context Recognition**: Automatically identifies HTML, JavaScript, CSS, and attribute contexts
-- **Payload Optimization**: Selects the most effective payloads based on response analysis
-- **False Positive Reduction**: Advanced filtering to minimize false positives
+### Context Analysis
+- **Context Recognition**: Identifies HTML, JavaScript, CSS, and attribute contexts via heuristic pattern analysis
+- **Payload Selection**: Chooses payloads based on the detected reflection context
+- **False Positive Reduction**: Multi-layer validation (reflection checks, safe-context detection, confidence thresholds)
 - **Confidence Scoring**: Risk assessment based on multiple factors
 
 ### Modern Attack Vectors
@@ -167,28 +169,32 @@ enableEncodingOptimization.setSelected(true);
 - **SPA Framework Attacks**: React, Angular, and Vue.js specific payloads
 - **Template Injection**: Server-side and client-side template attacks
 
-### Advanced Evasion Techniques
-- **WAF Bypass**: 50+ techniques to bypass web application firewalls
-- **Encoding Variants**: Unicode, Base64, URL encoding combinations
-- **Browser-Specific**: Chrome, Firefox, Safari, Edge specific payloads
+### Evasion Techniques
+- **WAF/Filter Bypass**: Multiple techniques to get past common input filters
+- **Encoding Variants**: Unicode, Base64, and URL encoding combinations
+- **Browser-Specific**: Payload variants targeting different browser parsing quirks
 - **Polyglot Payloads**: Multi-context attack vectors
 
-### Professional Reporting
-- **Compliance Validation**: OWASP, NIST, GDPR compliance checking
-- **Exploit Generation**: Automatic proof-of-concept code generation
-- **Remediation Guidance**: Detailed fix recommendations
-- **Risk Assessment**: Severity and impact analysis
+### Reporting
+- **Exploit Generation**: Proof-of-concept code (JavaScript, cURL, HTML) for confirmed findings
+- **Steps to Reproduce**: Actionable, numbered reproduction steps in every report
+- **Remediation Guidance**: Context-specific fix recommendations
+- **Risk Assessment**: Severity and impact analysis with OWASP/PortSwigger references
 
 ## Detection Capabilities
 
 ### Vulnerability Types
-| Type | Detection Method | Confidence | False Positive Rate |
-|------|------------------|------------|-------------------|
-| **Reflected XSS** | Context-aware payload injection | 95%+ | <2% |
-| **DOM XSS** | Client-side source/sink analysis | 90%+ | <5% |
-| **Stored XSS** | Response pattern analysis | 85%+ | <3% |
-| **Template Injection** | Framework-specific detection | 88%+ | <4% |
-| **WAF Bypass** | Evasion technique validation | 92%+ | <1% |
+| Type | Detection Method |
+|------|------------------|
+| **Reflected XSS** | Context-aware payload injection with reflection validation |
+| **DOM XSS** | Client-side source/sink data-flow analysis |
+| **Stored XSS** | Response pattern analysis on persisted input |
+| **Template Injection** | Client-side template/expression pattern detection |
+| **WAF/Filter Bypass** | Encoding and mutation technique variants |
+
+> Every finding includes a confidence score and is gated behind a configurable
+> reporting threshold to reduce false positives. As with any heuristic scanner,
+> findings should still be manually validated before disclosure.
 
 ### Supported Contexts
 - **HTML Context**: `<script>`, `<img>`, `<svg>`, `<iframe>`
@@ -205,28 +211,19 @@ enableEncodingOptimization.setSelected(true);
 - **GraphQL**: Query injection, introspection attacks
 - **WebSockets**: Real-time communication channel exploitation
 
-## Performance & Statistics
+## Performance
 
-### Scanning Performance
-- **Speed**: 1000+ requests/minute on standard hardware
-- **Memory Usage**: <50MB RAM during active scanning
-- **CPU Usage**: Optimized multi-threading with configurable thread pools
-- **Accuracy**: 95%+ detection rate with <2% false positives
+The extension is built to scan alongside normal Burp usage without overwhelming
+the target or the host:
 
-### Real-Time Analytics
-```java
-// Performance metrics tracking
-private int totalScansPerformed = 0;
-private int vulnerabilitiesFound = 0;
-private double averageScanTime = 0.0;
-private int scansPerMinute = 0;
-```
+- **Configurable Threading**: Tunable thread pool for encoding/active checks
+- **Response Caching**: Avoids re-sending identical test requests
+- **Large-Response Guard**: Skips responses over 10 MB to protect memory/performance
+- **Rate-Limit Awareness**: Backs off on HTTP 429 and skips on 5xx errors
+- **Deduplication**: Suppresses duplicate issues across passive and active scans
 
-### Advanced Statistics
-- **Detection Rate**: Real-time vulnerability discovery statistics
-- **Performance Metrics**: Scan speed, memory usage, CPU utilization
-- **Encoding Analysis**: Success rates for different encoding techniques
-- **Framework Detection**: Modern application pattern recognition
+> Actual throughput and memory use depend on target, scope, network latency,
+> and the options you enable. No fixed performance figures are guaranteed.
 
 ## Development
 
@@ -275,25 +272,28 @@ ls -la dist/XSSDetector.jar
 
 2. **Set up Development Environment**
    ```bash
-   # Install Java Development Kit
-   # Configure IDE (IntelliJ IDEA, Eclipse, VS Code)
-   # Set up Burp Suite Professional for testing
+   # Install a Java 11+ Development Kit
+   # Open the project in your IDE (IntelliJ IDEA, Eclipse, or VS Code)
+   # Install Burp Suite Professional for manual testing
    ```
 
-3. **Run Tests**
+3. **Build and Test Manually**
    ```bash
-   # Unit tests (when implemented)
-   ./run-tests.sh
-   
-   # Integration tests
-   ./run-integration-tests.sh
+   # Compile and package
+   ./build.sh
+
+   # Load dist/XSSDetector.jar into Burp and test against a
+   # deliberately vulnerable app (e.g. PortSwigger Web Security Academy
+   # labs, OWASP Juice Shop, or DVWA)
    ```
+
+> Note: an automated unit/integration test suite is not yet included.
+> Contributions adding tests are very welcome.
 
 ### Code Quality
-- **Static Analysis**: Automated code quality checks
-- **Security Scanning**: Dependency vulnerability analysis
-- **Performance Monitoring**: Real-time performance metrics
-- **Documentation**: Comprehensive inline documentation
+- **Inline Documentation**: Components are documented throughout the source
+- **Modular Engines**: Detection logic is split into focused, single-responsibility classes
+- **Manual Validation**: Findings are validated against reflection evidence before reporting
 
 ---
 

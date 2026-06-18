@@ -30,7 +30,7 @@ There are many ways to contribute to XSSDetector:
 
 Before contributing, ensure you have:
 
-- **Java 8 or higher** (Java 11+ recommended)
+- **Java 11 or higher** (the JAR is compiled for Java 11 compatibility)
 - **Git** for version control
 - **Burp Suite Professional** for testing
 - **IDE** (IntelliJ IDEA, Eclipse, or VS Code)
@@ -84,9 +84,9 @@ Before contributing, ensure you have:
    ```
 
 2. **IDE Configuration**
-   - **IntelliJ IDEA**: Import as Maven/Gradle project or Java project
-   - **Eclipse**: Import as Java project
-   - **VS Code**: Install Java extension pack
+   - **IntelliJ IDEA**: Open the folder and mark `src` as the sources root (plain Java project; no Maven/Gradle)
+   - **Eclipse**: Import as a Java project
+   - **VS Code**: Install the Java extension pack
 
 3. **Burp Suite Setup**
    - Install Burp Suite Professional
@@ -107,17 +107,23 @@ build.bat
 ls -la dist/XSSDetector.jar
 ```
 
-### Testing Setup
+### Testing
+
+There is no automated test suite yet. Validate changes manually:
 
 ```bash
-# Run unit tests (when implemented)
-./run-tests.sh
+# 1. Build the extension
+./build.sh
 
-# Run integration tests
-./run-integration-tests.sh
+# 2. Load dist/XSSDetector.jar into Burp Suite (Extender > Add > Java)
 
-# Manual testing with Burp Suite
+# 3. Test against a deliberately vulnerable target, e.g.:
+#    - PortSwigger Web Security Academy (XSS labs)
+#    - OWASP Juice Shop
+#    - DVWA
 ```
+
+Adding a unit/integration test suite is a welcome contribution.
 
 ## 📝 Code Style Guidelines
 
