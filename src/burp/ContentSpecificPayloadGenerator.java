@@ -148,6 +148,13 @@ public class ContentSpecificPayloadGenerator {
         this.callbacks = callbacks;
         this.settings = settings;
     }
+
+    // Verbose-only info logging (these fire on every parameter and are noise by default)
+    private void log(String msg) {
+        if (settings != null && settings.getVerboseLogging()) {
+            callbacks.printOutput(msg);
+        }
+    }
     
     /**
      * Generate payloads based on detected content type and reflection context
@@ -168,7 +175,7 @@ public class ContentSpecificPayloadGenerator {
             lowerContext.contains("html") || lowerContext.contains("body") || 
             lowerContext.contains("html_body") || lowerContext.contains("html_tag")) {
             payloads.addAll(Arrays.asList(HTML_CONTENT_PAYLOADS));
-            callbacks.printOutput("[ContentType] Detected HTML - Added " + HTML_CONTENT_PAYLOADS.length + " HTML-specific payloads");
+            log("[ContentType] Detected HTML - Added " + HTML_CONTENT_PAYLOADS.length + " HTML-specific payloads");
         }
         
         // CRITICAL: JavaScript content - only add JS payloads for JavaScript contexts
@@ -176,62 +183,62 @@ public class ContentSpecificPayloadGenerator {
             lowerContext.contains("javascript") || lowerContext.contains("script") ||
             lowerContext.contains("javascript_string") || lowerContext.contains("javascript_execution")) {
             payloads.addAll(Arrays.asList(JAVASCRIPT_CONTENT_PAYLOADS));
-            callbacks.printOutput("[ContentType] Detected JavaScript - Added " + JAVASCRIPT_CONTENT_PAYLOADS.length + " JavaScript-specific payloads");
+            log("[ContentType] Detected JavaScript - Added " + JAVASCRIPT_CONTENT_PAYLOADS.length + " JavaScript-specific payloads");
         }
         
         // CRITICAL: JSON content - only add JSON payloads for JSON contexts
         if (lowerContentType.contains("json") || lowerContext.contains("json") ||
             lowerContext.contains("json_string") || lowerContext.contains("json_value")) {
             payloads.addAll(Arrays.asList(JSON_CONTENT_PAYLOADS));
-            callbacks.printOutput("[ContentType] Detected JSON - Added " + JSON_CONTENT_PAYLOADS.length + " JSON-specific payloads");
+            log("[ContentType] Detected JSON - Added " + JSON_CONTENT_PAYLOADS.length + " JSON-specific payloads");
         }
         
         // XML content
         if (lowerContentType.contains("xml") || lowerContext.contains("xml")) {
             payloads.addAll(Arrays.asList(XML_CONTENT_PAYLOADS));
-            callbacks.printOutput("[ContentType] Detected XML - Added " + XML_CONTENT_PAYLOADS.length + " XML-specific payloads");
+            log("[ContentType] Detected XML - Added " + XML_CONTENT_PAYLOADS.length + " XML-specific payloads");
         }
         
         // SVG content
         if (lowerContentType.contains("svg") || lowerContext.contains("svg")) {
             payloads.addAll(Arrays.asList(SVG_CONTENT_PAYLOADS));
-            callbacks.printOutput("[ContentType] Detected SVG - Added " + SVG_CONTENT_PAYLOADS.length + " SVG-specific payloads");
+            log("[ContentType] Detected SVG - Added " + SVG_CONTENT_PAYLOADS.length + " SVG-specific payloads");
         }
         
         // CSS content
         if (lowerContentType.contains("css") || lowerContext.contains("css") || lowerContext.contains("style")) {
             payloads.addAll(Arrays.asList(CSS_CONTENT_PAYLOADS));
-            callbacks.printOutput("[ContentType] Detected CSS - Added " + CSS_CONTENT_PAYLOADS.length + " CSS-specific payloads");
+            log("[ContentType] Detected CSS - Added " + CSS_CONTENT_PAYLOADS.length + " CSS-specific payloads");
         }
         
         // Plain text (may be rendered)
         if (lowerContentType.contains("text/plain") || lowerContentType.contains("text/")) {
             payloads.addAll(Arrays.asList(PLAIN_TEXT_PAYLOADS));
-            callbacks.printOutput("[ContentType] Detected Plain Text - Added " + PLAIN_TEXT_PAYLOADS.length + " plain text payloads");
+            log("[ContentType] Detected Plain Text - Added " + PLAIN_TEXT_PAYLOADS.length + " plain text payloads");
         }
         
         // Markdown content
         if (lowerContentType.contains("markdown")) {
             payloads.addAll(Arrays.asList(MARKDOWN_PAYLOADS));
-            callbacks.printOutput("[ContentType] Detected Markdown - Added " + MARKDOWN_PAYLOADS.length + " Markdown-specific payloads");
+            log("[ContentType] Detected Markdown - Added " + MARKDOWN_PAYLOADS.length + " Markdown-specific payloads");
         }
         
         // YAML content
         if (lowerContentType.contains("yaml")) {
             payloads.addAll(Arrays.asList(YAML_PAYLOADS));
-            callbacks.printOutput("[ContentType] Detected YAML - Added " + YAML_PAYLOADS.length + " YAML-specific payloads");
+            log("[ContentType] Detected YAML - Added " + YAML_PAYLOADS.length + " YAML-specific payloads");
         }
         
         // PDF content
         if (lowerContentType.contains("pdf")) {
             payloads.addAll(Arrays.asList(PDF_PAYLOADS));
-            callbacks.printOutput("[ContentType] Detected PDF - Added " + PDF_PAYLOADS.length + " PDF-specific payloads");
+            log("[ContentType] Detected PDF - Added " + PDF_PAYLOADS.length + " PDF-specific payloads");
         }
         
         // Excel content
         if (lowerContentType.contains("excel") || lowerContentType.contains("spreadsheet")) {
             payloads.addAll(Arrays.asList(EXCEL_PAYLOADS));
-            callbacks.printOutput("[ContentType] Detected Excel - Added " + EXCEL_PAYLOADS.length + " Excel-specific payloads");
+            log("[ContentType] Detected Excel - Added " + EXCEL_PAYLOADS.length + " Excel-specific payloads");
         }
         
         return payloads;

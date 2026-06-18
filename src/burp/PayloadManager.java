@@ -261,9 +261,11 @@ public class PayloadManager {
             }
         }
         
-        callbacks.printOutput("[PayloadManager] Selected " + payloads.size() + " payloads for parameter: " + parameter.get(NAME) + 
-                            " (AppType: " + applicationType + ", ContentType: " + contentType + ")");
-        
+        if (settings != null && settings.getVerboseLogging()) {
+            callbacks.printOutput("[PayloadManager] Selected " + payloads.size() + " payloads for parameter: " + parameter.get(NAME) +
+                                " (AppType: " + applicationType + ", ContentType: " + contentType + ")");
+        }
+
         return payloads;
     }
     

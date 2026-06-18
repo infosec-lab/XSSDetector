@@ -247,6 +247,13 @@ public class ApplicationTypeSpecificPayloadGenerator {
         this.callbacks = callbacks;
         this.settings = settings;
     }
+
+    // Verbose-only info logging (these fire on every parameter and are noise by default)
+    private void log(String msg) {
+        if (settings != null && settings.getVerboseLogging()) {
+            callbacks.printOutput(msg);
+        }
+    }
     
     /**
      * Generate payloads based on detected application type
@@ -279,7 +286,7 @@ public class ApplicationTypeSpecificPayloadGenerator {
             // React payloads work in HTML (JSX) and JavaScript contexts
             if (isHTMLResponse || isJSResponse || lowerContentType.contains("html") || lowerContentType.contains("javascript")) {
                 payloads.addAll(Arrays.asList(REACT_SPECIFIC_PAYLOADS));
-                callbacks.printOutput("[ApplicationType] Detected React - Added " + REACT_SPECIFIC_PAYLOADS.length + " React-specific payloads (HTML/JS context)");
+                log("[ApplicationType] Detected React - Added " + REACT_SPECIFIC_PAYLOADS.length + " React-specific payloads (HTML/JS context)");
             }
         }
         
@@ -288,7 +295,7 @@ public class ApplicationTypeSpecificPayloadGenerator {
             // Angular payloads work in HTML (templates) and JavaScript contexts
             if (isHTMLResponse || isJSResponse || lowerContentType.contains("html") || lowerContentType.contains("javascript")) {
                 payloads.addAll(Arrays.asList(ANGULAR_SPECIFIC_PAYLOADS));
-                callbacks.printOutput("[ApplicationType] Detected Angular - Added " + ANGULAR_SPECIFIC_PAYLOADS.length + " Angular-specific payloads (HTML/JS context)");
+                log("[ApplicationType] Detected Angular - Added " + ANGULAR_SPECIFIC_PAYLOADS.length + " Angular-specific payloads (HTML/JS context)");
             }
         }
         
@@ -297,7 +304,7 @@ public class ApplicationTypeSpecificPayloadGenerator {
             // Vue payloads work in HTML (templates) and JavaScript contexts
             if (isHTMLResponse || isJSResponse || lowerContentType.contains("html") || lowerContentType.contains("javascript")) {
                 payloads.addAll(Arrays.asList(VUE_SPECIFIC_PAYLOADS));
-                callbacks.printOutput("[ApplicationType] Detected Vue.js - Added " + VUE_SPECIFIC_PAYLOADS.length + " Vue-specific payloads (HTML/JS context)");
+                log("[ApplicationType] Detected Vue.js - Added " + VUE_SPECIFIC_PAYLOADS.length + " Vue-specific payloads (HTML/JS context)");
             }
         }
         
@@ -308,7 +315,7 @@ public class ApplicationTypeSpecificPayloadGenerator {
             if (lowerContentType.contains("graphql") || responseBody != null && 
                 (responseBody.contains("query") || responseBody.contains("mutation") || responseBody.contains("__schema"))) {
                 payloads.addAll(Arrays.asList(GRAPHQL_SPECIFIC_PAYLOADS));
-                callbacks.printOutput("[ApplicationType] Detected GraphQL - Added " + GRAPHQL_SPECIFIC_PAYLOADS.length + " GraphQL-specific payloads");
+                log("[ApplicationType] Detected GraphQL - Added " + GRAPHQL_SPECIFIC_PAYLOADS.length + " GraphQL-specific payloads");
             }
         }
         
@@ -317,7 +324,7 @@ public class ApplicationTypeSpecificPayloadGenerator {
             // SPA payloads work in HTML and JavaScript contexts (router, state management)
             if (isHTMLResponse || isJSResponse || lowerContentType.contains("html") || lowerContentType.contains("javascript")) {
                 payloads.addAll(Arrays.asList(SPA_SPECIFIC_PAYLOADS));
-                callbacks.printOutput("[ApplicationType] Detected SPA - Added " + SPA_SPECIFIC_PAYLOADS.length + " SPA-specific payloads (HTML/JS context)");
+                log("[ApplicationType] Detected SPA - Added " + SPA_SPECIFIC_PAYLOADS.length + " SPA-specific payloads (HTML/JS context)");
             }
         }
         
@@ -329,7 +336,7 @@ public class ApplicationTypeSpecificPayloadGenerator {
             // Template payloads work in HTML contexts where templates are rendered
             if (isHTMLResponse || lowerContentType.contains("html")) {
                 payloads.addAll(Arrays.asList(TEMPLATE_ENGINE_PAYLOADS));
-                callbacks.printOutput("[ApplicationType] Detected Template Engine - Added " + TEMPLATE_ENGINE_PAYLOADS.length + " template-specific payloads (HTML context)");
+                log("[ApplicationType] Detected Template Engine - Added " + TEMPLATE_ENGINE_PAYLOADS.length + " template-specific payloads (HTML context)");
             }
         }
         
@@ -339,7 +346,7 @@ public class ApplicationTypeSpecificPayloadGenerator {
             // JSON payloads work in JSON contexts
             if (isJSONResponse || lowerContentType.contains("json")) {
                 payloads.addAll(Arrays.asList(JSON_API_PAYLOADS));
-                callbacks.printOutput("[ApplicationType] Detected JSON/API - Added " + JSON_API_PAYLOADS.length + " JSON/API-specific payloads (JSON context)");
+                log("[ApplicationType] Detected JSON/API - Added " + JSON_API_PAYLOADS.length + " JSON/API-specific payloads (JSON context)");
             }
         }
         
@@ -348,7 +355,7 @@ public class ApplicationTypeSpecificPayloadGenerator {
             // Microservices payloads work in API/JSON contexts
             if (isJSONResponse || lowerContentType.contains("json") || lowerContentType.contains("api")) {
                 payloads.addAll(Arrays.asList(MICROSERVICES_PAYLOADS));
-                callbacks.printOutput("[ApplicationType] Detected Microservices - Added " + MICROSERVICES_PAYLOADS.length + " microservices-specific payloads (API context)");
+                log("[ApplicationType] Detected Microservices - Added " + MICROSERVICES_PAYLOADS.length + " microservices-specific payloads (API context)");
             }
         }
         
@@ -358,7 +365,7 @@ public class ApplicationTypeSpecificPayloadGenerator {
             // JAMStack payloads work in HTML and static file contexts
             if (isHTMLResponse || lowerContentType.contains("html") || lowerContentType.contains("text")) {
                 payloads.addAll(Arrays.asList(JAMSTACK_PAYLOADS));
-                callbacks.printOutput("[ApplicationType] Detected JAMStack - Added " + JAMSTACK_PAYLOADS.length + " JAMStack-specific payloads (HTML/static context)");
+                log("[ApplicationType] Detected JAMStack - Added " + JAMSTACK_PAYLOADS.length + " JAMStack-specific payloads (HTML/static context)");
             }
         }
         

@@ -181,7 +181,11 @@ public class CheckReflection {
             
             // Add all enhanced issues to the issues list
             issues.addAll(enhancedIssues);
-            callbacks.printOutput("[CheckReflection] Added " + enhancedIssues.size() + " issues from EnhancedAggressive");
+            // Only log when something was actually collected, and only in verbose mode -
+            // this runs on every passive scan and was pure noise ("Added 0 issues ...").
+            if (!enhancedIssues.isEmpty() && settings != null && settings.getVerboseLogging()) {
+                callbacks.printOutput("[CheckReflection] Added " + enhancedIssues.size() + " issues from EnhancedAggressive");
+            }
             
             if (reflectedParameters == null || reflectedParameters.isEmpty()) {
                 return issues; // Return any enhanced issues even if no reflected parameters
