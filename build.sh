@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ------------------------------------------------------------
 #  XSSDetector – Build Script (Unix)
-#  Version: 2.0.0 (AI Edition)
+#  Version: 2.0.0
 # ------------------------------------------------------------
 
 set -euo pipefail

@@ -1,338 +1,44 @@
-name: Production Release - XSSDetector 2.0.0
+name: Release XSSDetector
 
 on:
   release:
-    types: [published]
+    types: [ published ]
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Release version'
-        required: true
-        default: '2.0.0'
-      release_notes:
-        description: 'Release notes'
-        required: false
-        default: 'Production release with comprehensive XSS detection capabilities'
 
 jobs:
-  production-build:
+  release:
+    name: Build and attach release JAR
     runs-on: ubuntu-latest
-    name: Production Build & Verification
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
-    - name: Set up Java 11
+
+    - name: Set up JDK 11
       uses: actions/setup-java@v4
       with:
         java-version: 11
         distribution: 'temurin'
-        
-    - name: Production compilation check
+
+    - name: Build
       run: |
-        echo "🔍 Running production compilation check..."
-        javac -cp "src" src/burp/*.java
-        echo "✅ Compilation successful"
-        
-    - name: Build production JAR
-      run: |
-        echo "🏗️ Building production JAR..."
         chmod +x build.sh
         ./build.sh
-        echo "✅ Production JAR built successfully"
-        
-    - name: Verify JAR contents
+
+    - name: Verify JAR
       run: |
-        echo "🔍 Verifying JAR contents..."
-        jar tf dist/XSSDetector.jar | head -20
-        echo "✅ JAR verification complete"
-        
-    - name: Production readiness check
-      run: |
-        echo "🔍 Running production readiness checks..."
-        
-        # Check for critical issues
-        echo "Checking for TODO/FIXME comments..."
-        if grep -r "TODO\|FIXME\|XXX\|HACK" src/; then
-          echo "⚠️ Found TODO/FIXME comments - review required"
-        else
-          echo "✅ No TODO/FIXME comments found"
-        fi
-        
-        # Check for debug code
-        echo "Checking for debug code..."
-        if grep -r "System.out.println\|e.printStackTrace" src/; then
-          echo "⚠️ Found debug code - review required"
-        else
-          echo "✅ No debug code found"
-        fi
-        
-        # Check file size
-        JAR_SIZE=$(stat -c%s dist/XSSDetector.jar)
-        echo "JAR size: $JAR_SIZE bytes"
-        if [ $JAR_SIZE -gt 1000000 ]; then
-          echo "⚠️ JAR file is large ($JAR_SIZE bytes)"
-        else
-          echo "✅ JAR file size is appropriate"
-        fi
-        
-    - name: Upload production JAR
+        test -f dist/XSSDetector.jar
+        ls -la dist/XSSDetector.jar
+
+    - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: XSSDetector-Production-2.0.0
+        name: XSSDetector
         path: dist/XSSDetector.jar
-        retention-days: 365
-        
-  security-audit:
-    runs-on: ubuntu-latest
-    name: Security Audit
-    needs: production-build
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Set up Java 11
-      uses: actions/setup-java@v4
+        retention-days: 90
+
+    - name: Attach JAR to GitHub Release
+      if: github.event_name == 'release'
+      uses: softprops/action-gh-release@v2
       with:
-        java-version: 11
-        distribution: 'temurin'
-        
-    - name: Security scan
-      run: |
-        echo "🔒 Running security audit..."
-        
-        # Check for hardcoded credentials
-        echo "Checking for hardcoded credentials..."
-        if grep -r "password\|secret\|key\|token" src/ | grep -v "//\|/\*"; then
-          echo "⚠️ Potential hardcoded credentials found"
-        else
-          echo "✅ No hardcoded credentials found"
-        fi
-        
-        # Check for SQL injection vulnerabilities
-        echo "Checking for SQL injection patterns..."
-        if grep -r "executeQuery\|executeUpdate\|Statement\|PreparedStatement" src/; then
-          echo "⚠️ SQL operations found - verify parameterization"
-        else
-          echo "✅ No SQL operations found"
-        fi
-        
-        # Check for XSS in logging
-        echo "Checking for XSS in logging..."
-        if grep -r "printOutput\|printError" src/ | grep -v "callbacks"; then
-          echo "⚠️ Direct output found - verify sanitization"
-        else
-          echo "✅ Logging uses proper callbacks"
-        fi
-        
-        echo "✅ Security audit complete"
-        
-  quality-assurance:
-    runs-on: ubuntu-latest
-    name: Quality Assurance
-    needs: production-build
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Code quality check
-      run: |
-        echo "📊 Running code quality checks..."
-        
-        # Count lines of code
-        echo "Lines of code statistics:"
-        find src/ -name "*.java" -exec wc -l {} + | tail -1
-        
-        # Check for proper exception handling
-        echo "Checking exception handling..."
-        EXCEPTION_COUNT=$(grep -r "try\|catch\|finally" src/ | wc -l)
-        echo "Exception handling blocks: $EXCEPTION_COUNT"
-        
-        # Check for null safety
-        echo "Checking null safety..."
-        NULL_CHECK_COUNT=$(grep -r "!= null\|== null" src/ | wc -l)
-        echo "Null checks: $NULL_CHECK_COUNT"
-        
-        # Check documentation
-        echo "Checking documentation..."
-        JAVADOC_COUNT=$(grep -r "/\*\*\|@param\|@return\|@throws" src/ | wc -l)
-        echo "JavaDoc comments: $JAVADOC_COUNT"
-        
-        echo "✅ Quality assurance complete"
-        
-  documentation-verification:
-    runs-on: ubuntu-latest
-    name: Documentation Verification
-    needs: production-build
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Verify documentation
-      run: |
-        echo "📚 Verifying documentation..."
-        
-        # Check required documentation files
-        REQUIRED_FILES=("README.md" "LICENSE" "CHANGELOG.md" "INSTALLATION.md" "SECURITY.md")
-        
-        for file in "${REQUIRED_FILES[@]}"; do
-          if [ -f "$file" ]; then
-            echo "✅ $file exists"
-          else
-            echo "❌ $file missing"
-            exit 1
-          fi
-        done
-        
-        # Check README content
-        echo "Checking README content..."
-        if grep -q "XSSDetector" README.md; then
-          echo "✅ README contains project name"
-        else
-          echo "❌ README missing project name"
-        fi
-        
-        if grep -q "Installation" README.md; then
-          echo "✅ README contains installation instructions"
-        else
-          echo "❌ README missing installation instructions"
-        fi
-        
-        echo "✅ Documentation verification complete"
-        
-  create-release:
-    runs-on: ubuntu-latest
-    name: Create Production Release
-    needs: [production-build, security-audit, quality-assurance, documentation-verification]
-    if: github.event_name == 'release'
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Download production JAR
-      uses: actions/download-artifact@v4
-      with:
-        name: XSSDetector-Production-2.0.0
-        path: ./release
-        
-    - name: Create release package
-      run: |
-        echo "📦 Creating release package..."
-        mkdir -p XSSDetector-2.0.0
-        
-        # Copy JAR file
-        cp release/XSSDetector.jar XSSDetector-2.0.0/
-        
-        # Copy documentation
-        cp README.md XSSDetector-2.0.0/
-        cp LICENSE XSSDetector-2.0.0/
-        cp CHANGELOG.md XSSDetector-2.0.0/
-        cp INSTALLATION.md XSSDetector-2.0.0/
-        cp SECURITY.md XSSDetector-2.0.0/
-        cp CONTRIBUTING.md XSSDetector-2.0.0/
-        
-        # Copy build scripts
-        cp build.bat XSSDetector-2.0.0/
-        cp build.sh XSSDetector-2.0.0/
-        
-                 # Create release notes
-         echo "# XSSDetector 2.0.0 - Production Release" > XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "## Production Ready Release" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "This is the official production release of XSSDetector 2.0.0, featuring comprehensive XSS detection capabilities with a professional user interface." >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "## Key Features" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- XSS Detection: Context-aware payloads with reflection validation" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- Analysis Engine: Heuristic context analysis (HTML/attribute/JS/CSS/URL)" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- DOM XSS: Client-side source-to-sink data-flow analysis" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- Reporting: Detailed HTML issue reports with steps to reproduce" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- WAF/Filter Bypass: Encoding and mutation evasion techniques" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- Modern Framework Awareness: React, Angular, Vue.js, GraphQL, WebSockets" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- Performance Controls: Configurable threading, caching, dedup" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "## Installation" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "1. Download XSSDetector.jar" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "2. Open Burp Suite Professional" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "3. Go to Extender -> Extensions -> Add" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "4. Select Java and browse to the JAR file" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "5. Click Add" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "## System Requirements" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- Burp Suite Professional 2023.1+" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- Java 11 or higher" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- Windows/macOS/Linux" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "## Build Instructions" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "Windows: .\\build.bat" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "Unix/Linux/macOS: ./build.sh" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "## Performance" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- Configurable thread pool for active/encoding checks" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- Response caching and deduplication" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- Large-response guard (skips responses over 10 MB)" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- Rate-limit awareness (backs off on HTTP 429)" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "## Robustness" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- Input Validation: Settings bounds checking" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- Error Handling: Graceful degradation and recovery" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "## Documentation" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- README.md - Quick start guide" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- INSTALLATION.md - Detailed installation instructions" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- ARCHITECTURE_MAPPING.md - Architecture and logic mapping" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- CHANGELOG.md - Version history and changes" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- SECURITY.md - Security policy and reporting" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "## Support" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- Issues: Report via GitHub Issues" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- Security: Report via SECURITY.md" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "- Contributions: See CONTRIBUTING.md" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "## License" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "MIT License - see LICENSE file for details" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "---" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-         echo "XSSDetector 2.0.0 - Professional XSS Detection for Burp Suite" >> XSSDetector-2.0.0/RELEASE_NOTES.md
-        
-        # Create ZIP archive
-        zip -r XSSDetector-2.0.0.zip XSSDetector-2.0.0/
-        
-        echo "✅ Release package created: XSSDetector-2.0.0.zip"
-        
-    - name: Upload release assets
-      uses: actions/upload-artifact@v4
-      with:
-        name: XSSDetector-Release-2.0.0
-        path: |
-          XSSDetector-2.0.0.zip
-          XSSDetector-2.0.0/XSSDetector.jar
-        retention-days: 365
-        
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          XSSDetector-2.0.0.zip
-          XSSDetector-2.0.0/XSSDetector.jar
-        body_path: XSSDetector-2.0.0/RELEASE_NOTES.md
-        draft: false
-        prerelease: false
-        generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+        files: dist/XSSDetector.jar
