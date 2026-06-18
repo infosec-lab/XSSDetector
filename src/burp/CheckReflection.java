@@ -1155,6 +1155,13 @@ public class CheckReflection {
                 }
             }
             
+            // Skip parameters with no usable name. Scanning an empty-named
+            // "parameter" wastes hundreds of payloads and produces spurious
+            // reflections not tied to any real input/sink.
+            if (parameter.getName() == null || parameter.getName().trim().isEmpty()) {
+                continue;
+            }
+
             // Apply bypass options
             if (settings.getBypassCookieChecks() && parameter.getType() == IParameter.PARAM_COOKIE) {
                 continue;

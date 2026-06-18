@@ -1749,7 +1749,8 @@ public class EnhancedAggressive {
                     }
                 }
                 
-                callbacks.printOutput("Parameter " + paramIndex + " completed. Results: " + paramResults.size());
+                if (settings != null && settings.getVerboseLogging())
+                    callbacks.printOutput("Parameter " + paramIndex + " completed. Results: " + paramResults.size());
                 
             } catch (Exception e) {
                 logError("Parameter Processing", e);
@@ -1855,85 +1856,17 @@ public class EnhancedAggressive {
                 parameter.put("REFLECTION_CONTEXT", reflectionContext);
             }
             
-            // CRITICAL: Get context-aware payloads with full intelligence AND ensure advanced payloads are included
-            // Use the version with helpers parameter to enable encoding variant generation
+            // Get context-aware payloads. getContextAwarePayloads() already merges the
+            // full advanced set via getAdvancedPayloads() internally, honouring the
+            // pentester's enabled-technique checkboxes. We deliberately do NOT re-call
+            // getAdvancedPayloads here (it was pure double work and double app/content-type
+            // detection) and we do NOT reflectively flip the user's settings on/off (that
+            // was thread-unsafe under concurrent scans and silently overrode the UI).
             List<String> payloads = payloadManager.getContextAwarePayloads(parameter, baseRequestResponse, helpers);
-            
-            // ENSURE ADVANCED TECHNIQUES: Also explicitly get advanced payloads to ensure nothing is missed
-            // This ensures all advanced techniques (Trusted Types, Sanitizer API, DOMPurify, Blob/File API, etc.) are included
-            // CRITICAL: For testParameterWithAdvancedTechniques, we want to ensure advanced techniques are ALWAYS included
-            try {
-                // Temporarily enable advanced settings if they're not already enabled
-                // This ensures advanced techniques are tested even if user hasn't enabled all settings
-                boolean originalModernBrowserAPI = settings.getEnableModernBrowserAPI();
-                boolean originalFrameworkSpecific = settings.getEnableFrameworkSpecific();
-                boolean originalPolyglot = settings.getEnablePolyglotPayloads();
-                
-                // Enable advanced settings for this test (if not already enabled)
-                if (!originalModernBrowserAPI) {
-                    try {
-                        java.lang.reflect.Method setMethod = settings.getClass().getMethod("setEnableModernBrowserAPI", boolean.class);
-                        setMethod.invoke(settings, true);
-                        callbacks.printOutput("[Advanced Techniques] Temporarily enabled Modern Browser API for advanced testing");
-                    } catch (Exception e) {
-                        // If reflection fails, continue without it
-                    }
-                }
-                if (!originalFrameworkSpecific) {
-                    try {
-                        java.lang.reflect.Method setMethod = settings.getClass().getMethod("setEnableFrameworkSpecific", boolean.class);
-                        setMethod.invoke(settings, true);
-                        callbacks.printOutput("[Advanced Techniques] Temporarily enabled Framework Specific for advanced testing");
-                    } catch (Exception e) {
-                        // If reflection fails, continue without it
-                    }
-                }
-                
-                // Get advanced payloads with settings enabled
-                List<String> advancedPayloads = payloadManager.getAdvancedPayloads(parameter);
-                
-                // Restore original settings
-                if (!originalModernBrowserAPI) {
-                    try {
-                        java.lang.reflect.Method setMethod = settings.getClass().getMethod("setEnableModernBrowserAPI", boolean.class);
-                        setMethod.invoke(settings, false);
-                    } catch (Exception e) {
-                        // Ignore
-                    }
-                }
-                if (!originalFrameworkSpecific) {
-                    try {
-                        java.lang.reflect.Method setMethod = settings.getClass().getMethod("setEnableFrameworkSpecific", boolean.class);
-                        setMethod.invoke(settings, false);
-                    } catch (Exception e) {
-                        // Ignore
-                    }
-                }
-                
-                if (advancedPayloads != null && !advancedPayloads.isEmpty()) {
-                    // Merge advanced payloads with context-aware payloads (avoid duplicates)
-                    Set<String> payloadSet = new LinkedHashSet<>(payloads);
-                    payloadSet.addAll(advancedPayloads);
-                    payloads = new ArrayList<>(payloadSet);
-                    callbacks.printOutput("[Advanced Techniques] Included " + advancedPayloads.size() + " advanced payloads for parameter: " + paramName);
-                }
-            } catch (Exception e) {
-                callbacks.printError("Error getting advanced payloads: " + e.getMessage());
-                // Fallback: just get advanced payloads without modifying settings
-                try {
-                    List<String> advancedPayloads = payloadManager.getAdvancedPayloads(parameter);
-                    if (advancedPayloads != null && !advancedPayloads.isEmpty()) {
-                        Set<String> payloadSet = new LinkedHashSet<>(payloads);
-                        payloadSet.addAll(advancedPayloads);
-                        payloads = new ArrayList<>(payloadSet);
-                    }
-                } catch (Exception e2) {
-                    // Ignore fallback errors
-                }
-            }
-            
+
             if (payloads == null || payloads.isEmpty()) {
-                callbacks.printOutput("No payloads available for parameter: " + paramName);
+                if (settings != null && settings.getVerboseLogging())
+                    callbacks.printOutput("No payloads available for parameter: " + paramName);
                 return results;
             }
             
@@ -2063,7 +1996,7 @@ public class EnhancedAggressive {
                 }
             }
             
-            if (!vulnerabilityConfirmed) {
+            if (!vulnerabilityConfirmed && settings != null && settings.getVerboseLogging()) {
                 callbacks.printOutput("No vulnerabilities confirmed for parameter: " + paramName);
             }
             
