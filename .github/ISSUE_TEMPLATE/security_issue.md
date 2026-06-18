@@ -3,7 +3,7 @@ name: Security Issue
 about: Report a security vulnerability in XSSDetector
 title: '[SECURITY] '
 labels: ['security', 'confidential']
-assignees: ['vikaskumar']
+assignees: []
 ---
 
 ## 🚨 Security Vulnerability Report
@@ -148,8 +148,8 @@ Please add appropriate labels:
 ## 📞 Contact
 
 For urgent security issues or questions:
-- **GitHub Security**: [Create a private security advisory](https://github.com/vikaskumar/XSSDetector/security/advisories)
-- **Email**: [Contact via GitHub](https://github.com/vikaskumar/XSSDetector/issues)
+- **GitHub Security**: [Create a private security advisory](https://github.com/infosec-lab/XSSDetector/security/advisories)
+- **Email**: [infoseclab005@gmail.com](mailto:infoseclab005@gmail.com)
 
 ---
 

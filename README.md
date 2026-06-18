@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Java](https://img.shields.io/badge/Java-8%2B-blue.svg)](https://www.oracle.com/java/)
 [![Burp Suite](https://img.shields.io/badge/Burp%20Suite-2023.1%2B-orange.svg)](https://portswigger.net/burp)
-[![Version](https://img.shields.io/badge/Version-2.0.0--Production%20Ready-green.svg)](https://github.com/XSSDetector/XSSDetector/releases)
+[![Version](https://img.shields.io/badge/Version-2.0.0--Production%20Ready-green.svg)](https://github.com/infosec-lab/XSSDetector/releases)
 
 *A comprehensive Burp Suite extension for detecting all forms of XSS, client-side injections, and SPA/API abuse using advanced payloads, encoding, and bypass techniques.*
 
@@ -79,7 +79,7 @@
 1. **Download the Latest Release**
    ```bash
    # Clone the repository
-   git clone https://github.com/XSSDetector/XSSDetector.git
+   git clone https://github.com/infosec-lab/XSSDetector.git
    cd XSSDetector
    
    # Build the extension
@@ -269,7 +269,7 @@ ls -la dist/XSSDetector.jar
 ### Development Setup
 1. **Clone the Repository**
    ```bash
-   git clone https://github.com/XSSDetector/XSSDetector.git
+   git clone https://github.com/infosec-lab/XSSDetector.git
    cd XSSDetector
    ```
 
@@ -326,9 +326,8 @@ We welcome contributions from the security community! Here's how you can help:
 
 ## Credits
 
-**Vikas Kumar** - *Senior Security Consultant*  
+**XSSDetector Contributors**  
 - **Email**: [infoseclab005@gmail.com](mailto:infoseclab005@gmail.com)  
-- **LinkedIn**: [Vikas Kumar](https://www.linkedin.com/in/vikas-k-8b2a495b/)  
 - **GitHub**: [@infosec-lab](https://github.com/infosec-lab)  
 
 ### Special Thanks
@@ -341,10 +340,10 @@ We welcome contributions from the security community! Here's how you can help:
 
 <div align="center">
 
-**BackSense** - Advanced XSS Vulnerability Scanner for Burp Suite
+**XSSDetector** - Advanced XSS Vulnerability Scanner for Burp Suite
 
 *Built with ❤️ for the security community*
 
-[![GitHub](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/infosec-lab/backsense)
+[![GitHub](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/infosec-lab/XSSDetector)
 
 </div> 

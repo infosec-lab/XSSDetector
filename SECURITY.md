@@ -24,9 +24,9 @@ We take security vulnerabilities seriously. If you discover a security vulnerabi
 
 To report a security vulnerability, please contact us privately:
 
-- **Email**: [security@xssdetector.com](mailto:security@xssdetector.com) (if available)
-- **GitHub Security**: [Create a private security advisory](https://github.com/XSSDetector/XSSDetector/security/advisories)
-- **Direct Contact**: [Contact via GitHub Issues](https://github.com/XSSDetector/XSSDetector/issues) (mark as private)
+- **Email**: [infoseclab005@gmail.com](mailto:infoseclab005@gmail.com)
+- **GitHub Security**: [Create a private security advisory](https://github.com/infosec-lab/XSSDetector/security/advisories)
+- **Direct Contact**: [Contact via GitHub Issues](https://github.com/infosec-lab/XSSDetector/issues) (mark as private)
 
 ### 📋 Information to Include
 
@@ -121,13 +121,13 @@ When using XSSDetector:
 
 - **Name**: XSSDetector Security Team
 - **Role**: Security Maintainer
-- **Email**: [Contact via GitHub](https://github.com/XSSDetector/XSSDetector/issues)
+- **Email**: [infoseclab005@gmail.com](mailto:infoseclab005@gmail.com)
 - **PGP Key**: [If available]
 
 ### Security Team
 
-- **GitHub Security Team**: [GitHub Security](https://github.com/XSSDetector/XSSDetector/security)
-- **Community Security**: [Community Security](https://github.com/XSSDetector/XSSDetector/discussions)
+- **GitHub Security Team**: [GitHub Security](https://github.com/infosec-lab/XSSDetector/security)
+- **Community Security**: [Community Security](https://github.com/infosec-lab/XSSDetector/discussions)
 
 ## Security Resources
 

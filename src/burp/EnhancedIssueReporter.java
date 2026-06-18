@@ -144,6 +144,20 @@ public class EnhancedIssueReporter {
             detail.append("<p><b>Status:</b> ").append(confirmedXSS ? "CONFIRMED" : "Detected pattern").append("</p>");
             detail.append("<p><b>Confidence Score:</b> ").append(String.format("%.1f", confidenceScore)).append("%</p>");
 
+            // Steps to Reproduce - ensure every report is actionable for pentesters
+            detail.append("<h4>Steps to Reproduce</h4>");
+            detail.append("<ol>");
+            detail.append("<li>Send a request to the affected endpoint with the parameter <code>")
+                  .append(escapeHtml(paramName)).append("</code>.</li>");
+            detail.append("<li>Set the parameter value to the payload: <code>")
+                  .append(escapeHtml(truncatePayload(payload, 200))).append("</code></li>");
+            detail.append("<li>Inspect the response and confirm the payload is reflected unencoded")
+                  .append(reflectionContext != null ? " in the " + escapeHtml(reflectionContext) + " context" : "")
+                  .append(".</li>");
+            detail.append("<li>Load the request in a browser and confirm the JavaScript executes ")
+                  .append("(e.g. an <code>alert()</code> dialog appears or a network callback fires).</li>");
+            detail.append("</ol>");
+
             // Build remediation
             String remediation = "<p>Implement proper output encoding based on context:</p>" +
                 "<ul><li>HTML context: Use HTML entity encoding</li>" +

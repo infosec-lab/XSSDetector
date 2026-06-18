@@ -3,7 +3,7 @@ name: Feature request
 about: Suggest an idea for XSSDetector
 title: '[FEATURE] '
 labels: ['enhancement', 'needs-triage']
-assignees: ['vikaskumar']
+assignees: []
 ---
 
 ## 🚀 Feature Description

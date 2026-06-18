@@ -3,7 +3,7 @@ name: Bug report
 about: Create a report to help us improve XSSDetector
 title: '[BUG] '
 labels: ['bug', 'needs-triage']
-assignees: ['vikaskumar']
+assignees: []
 ---
 
 ## 🐛 Bug Description
@@ -85,4 +85,4 @@ Please add appropriate labels to help categorize this issue:
 
 ---
 
-**Note**: For security-related issues, please use the [Security Policy](https://github.com/vikaskumar/XSSDetector/security/policy) instead of creating a public issue. 
+**Note**: For security-related issues, please use the [Security Policy](https://github.com/infosec-lab/XSSDetector/security/policy) instead of creating a public issue. 

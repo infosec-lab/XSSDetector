@@ -130,22 +130,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Support
 
 For support and questions:
-- **GitHub Issues**: [Report Issues](https://github.com/vikaskumar/XSSDetector/issues)
-- **Documentation**: [Read the Docs](https://github.com/vikaskumar/XSSDetector/blob/main/README.md)
-- **Community**: [Join Discussions](https://github.com/vikaskumar/XSSDetector/discussions)
+- **GitHub Issues**: [Report Issues](https://github.com/infosec-lab/XSSDetector/issues)
+- **Documentation**: [Read the Docs](https://github.com/infosec-lab/XSSDetector/blob/main/README.md)
+- **Community**: [Join Discussions](https://github.com/infosec-lab/XSSDetector/discussions)
 
 ---
 
 ## Contributors
 
 ### Version 2.0.0
-- **Vikas Kumar** - Lead Developer & Architect
+- **XSSDetector Contributors** - Development & Architecture
 - **Security Community** - Testing & Feedback
 - **Open Source Contributors** - Code Reviews & Improvements
 
 ### Version 1.5.0
-- **Vikas Kumar** - Core Development
+- **XSSDetector Contributors** - Core Development
 - **Beta Testers** - Testing & Bug Reports
 
 ### Version 1.0.0
-- **Vikas Kumar** - Project Foundation 
+- **XSSDetector Contributors** - Project Foundation 

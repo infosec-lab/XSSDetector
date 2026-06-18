@@ -149,8 +149,8 @@ If you discover a security vulnerability in XSSDetector:
 
 For questions about this Code of Conduct or to report violations:
 
-* **GitHub Issues**: [Create a private issue](https://github.com/vikaskumar/XSSDetector/issues)
-* **Email**: [Contact via GitHub](https://github.com/vikaskumar/XSSDetector/issues)
+* **GitHub Issues**: [Create a private issue](https://github.com/infosec-lab/XSSDetector/issues)
+* **Email**: [infoseclab005@gmail.com](mailto:infoseclab005@gmail.com)
 * **Security Issues**: Report privately to maintainers
 
 ## Acknowledgment

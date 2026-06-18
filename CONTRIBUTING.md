@@ -40,7 +40,7 @@ Before contributing, ensure you have:
 
 1. **Fork the Repository**
    ```bash
-   git clone https://github.com/your-username/XSSDetector.git
+   git clone https://github.com/infosec-lab/XSSDetector.git
    cd XSSDetector
    ```
 
@@ -394,9 +394,9 @@ Contributors who have made significant contributions:
 
 For questions about contributing:
 
-- **GitHub Issues**: [Create an issue](https://github.com/vikaskumar/XSSDetector/issues)
-- **Discussions**: [Join discussions](https://github.com/vikaskumar/XSSDetector/discussions)
-- **Email**: [Contact via GitHub](https://github.com/vikaskumar/XSSDetector/issues)
+- **GitHub Issues**: [Create an issue](https://github.com/infosec-lab/XSSDetector/issues)
+- **Discussions**: [Join discussions](https://github.com/infosec-lab/XSSDetector/discussions)
+- **Email**: [infoseclab005@gmail.com](mailto:infoseclab005@gmail.com)
 
 ## 🙏 Acknowledgments
 
