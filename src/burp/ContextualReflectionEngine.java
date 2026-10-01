@@ -14,9 +14,8 @@ import java.util.Set;
 /**
  * ContextualReflectionEngine
  *
- * A fully contextual reflected-XSS engine modelled on elkokc/reflector's
- * methodology and extended to cover modern applications and JSON/JSONP APIs
- * (which Reflector itself does not handle).
+ * A fully contextual reflected-XSS engine for modern applications, covering
+ * HTML, attribute, JavaScript, CSS and JSON/JSONP reflection contexts.
  *
  * Detection is a two-request, double-confirmed process per insertion point, so
  * a finding is only ever raised on a genuine, live break-out:
@@ -140,6 +139,102 @@ public class ContextualReflectionEngine {
             }
         }
         return issues;
+    }
+
+    /**
+     * Real-time passive feed: while traffic is proxied/browsed, detect where a
+     * request parameter is reflected in the response and record it (with its
+     * context) in the Live Results view. No payload is injected here -- these
+     * are candidates to be actively confirmed, so they are recorded as
+     * {@link XssFinding#STATUS_REFLECTED} at Info severity and are upgraded to
+     * Confirmed automatically if an active scan verifies them.
+     */
+    public void passiveReflections(IHttpRequestResponse rr, String source) {
+        try {
+            if (rr == null || rr.getResponse() == null || rr.getRequest() == null) {
+                return;
+            }
+            IResponseInfo respInfo = helpers.analyzeResponse(rr.getResponse());
+            MimeInfo mime = classifyMime(respInfo);
+            String ct = mime.contentType;
+            boolean textual = ct.isEmpty() || ct.contains("html") || ct.contains("json")
+                    || ct.contains("javascript") || ct.contains("xml") || ct.contains("text");
+            if (!textual) {
+                return;
+            }
+            byte[] respBytes = rr.getResponse();
+            String body = new String(Arrays.copyOfRange(respBytes, respInfo.getBodyOffset(), respBytes.length),
+                    StandardCharsets.UTF_8);
+
+            IRequestInfo reqInfo = helpers.analyzeRequest(rr);
+            String method = reqInfo.getMethod();
+            String url = reqInfo.getUrl() != null ? reqInfo.getUrl().toString() : "";
+            IHttpService svc = rr.getHttpService();
+            String host = svc != null ? svc.getHost() : "";
+
+            int reported = 0;
+            for (IParameter p : reqInfo.getParameters()) {
+                if (reported >= 10) {
+                    break; // keep the browse feed light
+                }
+                String value = p.getValue();
+                if (value == null || value.length() < 4) {
+                    continue;
+                }
+                String decoded = value;
+                try {
+                    String d = helpers.urlDecode(value);
+                    if (d != null) {
+                        decoded = d;
+                    }
+                } catch (Exception ignored) {
+                    // use raw value
+                }
+                int idx = body.indexOf(decoded);
+                if (idx < 0 && !decoded.equals(value)) {
+                    idx = body.indexOf(value);
+                }
+                if (idx < 0) {
+                    continue;
+                }
+                CtxResult c = detectContext(body, idx);
+                if (c.ctx == Ctx.UNKNOWN || c.ctx == Ctx.PLAINTEXT) {
+                    continue; // nothing actionable to flag
+                }
+                FindingStore.get().add(new XssFinding(
+                        "Info", XssFinding.STATUS_REFLECTED, contextLabel(c), p.getName(),
+                        method, host, url, source,
+                        "Reflection seen while browsing - run an active scan to confirm.",
+                        rr.getRequest(), rr.getResponse()));
+                reported++;
+            }
+        } catch (Exception e) {
+            if (settings != null && settings.getVerboseLogging()) {
+                callbacks.printError("[ContextualReflectionEngine] passive: " + e.getMessage());
+            }
+        }
+    }
+
+    private String contextLabel(CtxResult c) {
+        switch (c.ctx) {
+            case HTML_TEXT: return "HTML text";
+            case HTML_COMMENT: return "HTML comment";
+            case TAG_NAME_OR_ATTR: return "Tag / attribute-name position";
+            case ATTR_DOUBLE: return "Double-quoted attribute";
+            case ATTR_SINGLE: return "Single-quoted attribute";
+            case ATTR_UNQUOTED: return "Unquoted attribute";
+            case ATTR_URL: return "URL attribute";
+            case EVENT_HANDLER: return "Event handler (JavaScript)";
+            case SCRIPT_DATA: return "Inline <script> block";
+            case SCRIPT_STRING_SINGLE: return "JavaScript string (single-quoted)";
+            case SCRIPT_STRING_DOUBLE: return "JavaScript string (double-quoted)";
+            case SCRIPT_TEMPLATE: return "JavaScript template literal";
+            case STYLE: return "Inline <style> block";
+            case RAWTEXT: return "Rawtext element <" + (c.rawTag.isEmpty() ? "textarea" : c.rawTag) + ">";
+            case JSON_STRING: return "JSON value";
+            case JSONP: return "JSONP callback";
+            default: return "Reflection";
+        }
     }
 
     // ------------------------------------------------------------------
@@ -788,6 +883,23 @@ public class ContextualReflectionEngine {
 
             String name = "Reflected XSS (" + f.contextLabel + ") - " + param;
             String detail = renderDetail(f, param, insType);
+
+            // Feed the Live Results view (confirmed by live PoC).
+            try {
+                IHttpService svc = evidence.getHttpService();
+                String method = "";
+                try {
+                    method = helpers.analyzeRequest(evidence).getMethod();
+                } catch (Exception ignored) {
+                    // method is best-effort
+                }
+                FindingStore.get().add(new XssFinding(
+                        f.severity, XssFinding.STATUS_CONFIRMED, f.contextLabel, param,
+                        method, svc != null ? svc.getHost() : "", url != null ? url.toString() : "",
+                        "Scanner", f.poc, evidence.getRequest(), evidence.getResponse()));
+            } catch (Exception ignored) {
+                // never let reporting-side wiring break issue creation
+            }
 
             return new DynamicScanIssue(
                     evidence.getHttpService(), url, new IHttpRequestResponse[]{marked},

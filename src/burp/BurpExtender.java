@@ -80,6 +80,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
     private EnhancedClientSideAttackDetector clientSideDetector;
     private EnhancedAggressive aggressiveDetector;
     private ContextualReflectionEngine contextualEngine;
+    private LiveResultsPanel liveResults;
     private AdvancedFilteringEngine filteringEngine;
     private ModernXSSAnalyzer modernXssAnalyzer;
     
@@ -262,8 +263,8 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 enginesFailed++;
             }
 
-            // Contextual reflection engine (Reflector-style probe-and-measure,
-            // extended to JSON/JSONP) -- the primary context-aware detector.
+            // Contextual reflection engine (context-aware probe-and-confirm,
+            // including JSON/JSONP) -- the primary context-aware detector.
             try {
                 this.contextualEngine = new ContextualReflectionEngine(helpers, callbacks, settings);
                 enginesInitialized++;
@@ -324,34 +325,38 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
      */
     private void initializeUI() {
         try {
-            // Root panel for the Burp tab.
+            // Root panel for the Burp tab, organised into navigable tabs.
             panel = new JPanel(new BorderLayout());
+            JTabbedPane tabs = new JTabbedPane();
 
-            // Single, left-aligned, scrollable column of titled sections.
+            // --- Tab 1: Live Results (real-time findings + smart filters) ---
+            liveResults = new LiveResultsPanel(FindingStore.get());
+            tabs.addTab("Live Results", liveResults);
+
+            // --- Tab 2: Settings (left-aligned, scrollable sections) ---
             JPanel column = new JPanel();
             column.setLayout(new BoxLayout(column, BoxLayout.Y_AXIS));
             column.setBorder(BorderFactory.createEmptyBorder(12, 14, 12, 14));
-
             column.add(createHeader());
             column.add(Box.createVerticalStrut(10));
             column.add(createSettingsPanel());
-            column.add(Box.createVerticalStrut(10));
 
-            JPanel contentTypePanel = createContentTypePanel();
-            contentTypePanel.setAlignmentX(Component.LEFT_ALIGNMENT);
-            contentTypePanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 260));
-            column.add(contentTypePanel);
-
-            // Pin the column to the top-left so nothing floats in the centre.
-            JPanel holder = new JPanel(new BorderLayout());
-            holder.add(column, BorderLayout.NORTH);
-
-            JScrollPane scroll = new JScrollPane(holder,
+            JPanel settingsHolder = new JPanel(new BorderLayout());
+            settingsHolder.add(column, BorderLayout.NORTH);
+            JScrollPane settingsScroll = new JScrollPane(settingsHolder,
                     JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
                     JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
-            scroll.setBorder(null);
-            scroll.getVerticalScrollBar().setUnitIncrement(16);
-            panel.add(scroll, BorderLayout.CENTER);
+            settingsScroll.setBorder(null);
+            settingsScroll.getVerticalScrollBar().setUnitIncrement(16);
+            tabs.addTab("Settings", settingsScroll);
+
+            // --- Tab 3: Content Types ---
+            JPanel ctWrap = new JPanel(new BorderLayout());
+            ctWrap.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
+            ctWrap.add(createContentTypePanel(), BorderLayout.CENTER);
+            tabs.addTab("Content Types", ctWrap);
+
+            panel.add(tabs, BorderLayout.CENTER);
 
             // Initialize listeners
             initListeners();
@@ -413,7 +418,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         // --- Create controls (field names unchanged -> listeners stay wired) ---
         scopeOnly = new JCheckBox("Scan in-scope targets only", settings.getScopeOnly());
         aggressiveMode = new JCheckBox("Aggressive mode (extra bypass probes)", settings.getAggressiveMode());
-        checkContext = new JCheckBox("Contextual reflection engine  (Reflector-style + JSON/JSONP)", settings.getCheckContext());
+        checkContext = new JCheckBox("Contextual reflection engine  (context-aware, incl. JSON/JSONP)", settings.getCheckContext());
 
         modernDetection = new JCheckBox("Modern framework detection", settings.getModernDetection());
         domXssDetection = new JCheckBox("DOM XSS (source-to-sink)", settings.getDomXssDetection());
@@ -978,7 +983,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             }
 
             // CRITICAL: Step 1 - Basic reflection detection (always enabled - foundation)
-            // This is the core detection that matches reflector plugin behavior
+            // This is the core reflection detection used on all passive traffic
             if (checkReflection != null) {
                 try {
                     List<IScanIssue> reflectionIssues = checkReflection.doPassiveScan(baseRequestResponse);
@@ -1359,6 +1364,14 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                     if (settings != null && settings.getVerboseLogging() && reported > 0) {
                         callbacks.printOutput("[" + PLUGIN_NAME + "] Real-time scan (" + toolName + ") reported " + reported + " issue(s)");
                     }
+                }
+
+                // Real-time behavioural feed: record where input is reflected in
+                // this browsed/proxied response (no injection) so the Live Results
+                // view fills as you browse. Active scanning upgrades these to
+                // Confirmed when verified.
+                if (settings != null && settings.getCheckContext() && contextualEngine != null) {
+                    contextualEngine.passiveReflections(messageInfo, toolName);
                 }
             } catch (Exception e) {
                 if (settings != null && settings.getVerboseLogging()) {
@@ -2141,8 +2154,8 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         List<IScanIssue> contextualConfirmed = new ArrayList<>();
 
         try {
-            // Step 0: Contextual reflection engine -- Reflector-style per-character
-            // break-out analysis with full context classification (HTML, attribute,
+            // Step 0: Contextual reflection engine -- per-character break-out
+            // analysis with full context classification (HTML, attribute,
             // JS string/template, event handler, URL, CSS) and JSON/JSONP support.
             if (settings.getCheckContext() && contextualEngine != null) {
                 try {

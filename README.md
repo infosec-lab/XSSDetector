@@ -20,10 +20,17 @@ source-to-sink analysis — with validated, reproducible findings.
 
 ## Features
 
-- **Contextual reflection engine** — a Reflector-style (elkokc/reflector) probe
-  that injects a unique canary interleaved with every break-out character, then
-  measures *exactly* which characters survive unencoded at each reflection point
-  and classifies the context with a real HTML/JS tokenizer
+- **Contextual reflection engine** — injects a unique canary interleaved with
+  every break-out character, then measures *exactly* which characters survive
+  unencoded at each reflection point and classifies the context with a real
+  HTML/JS tokenizer
+- **Live Results view** — findings stream into a real-time table (with a
+  request/response viewer) as you browse and scan; right-side **smart filters**
+  (search, severity, status, context) narrow the list instantly, and results
+  export to CSV
+- **Real-time browse feed** — reflections are flagged passively while proxying
+  traffic (no injection) and upgraded to *Confirmed* automatically once an active
+  scan verifies them
 - **Two-stage live confirmation (near-zero false positives)** — a candidate is
   only reported after its context-specific proof-of-concept is injected for real
   and observed reflected **verbatim and unescaped** in the response; anything the
@@ -34,9 +41,9 @@ source-to-sink analysis — with validated, reproducible findings.
   JavaScript single/double/template strings, `<style>`/CSS, and rawtext/RCDATA
   elements (`textarea`, `title`, `iframe`, `xmp`, …) where only the matching end
   tag can break out — so inert reflections are never misreported
-- **JSON & JSONP aware** — handles modern API responses that Reflector does not:
-  JSONP callback execution, JSON bodies rendered as HTML via wrong/sniffable
-  `Content-Type`, while correctly treating strict `application/json` +
+- **JSON & JSONP aware** — handles modern API responses: JSONP callback
+  execution, JSON bodies rendered as HTML via wrong/sniffable `Content-Type`,
+  while correctly treating strict `application/json` +
   `X-Content-Type-Options: nosniff` as non-exploitable
 - **Dynamic, evidence-only reports** — each finding shows live data only: the
   reflection context, a per-character break-out table, the confirmed PoC, and the
@@ -69,11 +76,18 @@ Confirm the **XSSDetector** tab appears and that there are no errors in
 
 ## Usage
 
+The tab has three sections: **Live Results** (real-time findings table + smart
+filters + request/response viewer), **Settings** (engines, payload packs,
+reporting), and **Content Types** (which response types to analyse).
+
 1. Set your target in Burp's scope (optionally enable **Scope only**).
-2. In the **XSSDetector** tab, enable the checks you need — Modern Detection,
-   DOM XSS, active/aggressive scanning, and encoding options.
-3. Browse the target or run Burp's scanner. Findings appear in the **Issues** tab,
-   and in real time as you proxy traffic.
+2. In **Settings**, enable the checks you need — the Contextual reflection engine
+   is on by default; add Modern Detection, DOM XSS, and payload packs as needed.
+3. Browse the target: reflections appear live in **Live Results**. Run Burp's
+   scanner (or right-click → Scan) to confirm them — confirmed findings also land
+   in Burp's **Issues** tab with a live break-out table and a ready PoC.
+
+See [REFERENCE.md](REFERENCE.md) for a short guide to the UI and navigation.
 
 ## Detection Scope
 
