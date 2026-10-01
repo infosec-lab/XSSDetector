@@ -49,7 +49,7 @@ if !JAVA_COUNT!==0 (
 echo Found !JAVA_COUNT! Java file(s) to compile
 rem Use wildcard without quotes - Windows cmd.exe will expand it
 cd /d "%SRC_DIR%\%PKG_DIR%"
-javac --release 11 -d "%~dp0%CLASS_DIR%" -cp "%~dp0%SRC_DIR%" *.java
+javac --release 11 -encoding UTF-8 -d "%~dp0%CLASS_DIR%" -cp "%~dp0%SRC_DIR%" *.java
 if errorlevel 1 (
     echo ERROR: Compilation failed. Check errors above.
     cd /d "%~dp0"

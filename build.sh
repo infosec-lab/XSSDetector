@@ -29,7 +29,7 @@ rm -f "$DIST_DIR/$JAR_NAME"
 echo "[1/3] Compiling ..."
 # Ensure Java 11 target for Burp Suite compatibility (class file version 55.0)
 # Using --release 11 ensures proper system module location for JDK 11 compatibility
-javac --release 11 -d "$CLASS_DIR" -cp "$SRC_DIR" "$SRC_DIR/$PKG_DIR/"*.java
+javac --release 11 -encoding UTF-8 -d "$CLASS_DIR" -cp "$SRC_DIR" "$SRC_DIR/$PKG_DIR/"*.java
 echo "    ✓ Compilation succeeded (Java 11 target)"
 
 echo "[2/3] Packaging ..."
