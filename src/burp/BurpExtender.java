@@ -324,148 +324,165 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
      */
     private void initializeUI() {
         try {
-            // Create main panel
+            // Root panel for the Burp tab.
             panel = new JPanel(new BorderLayout());
-            
-            // Create settings panel
-            JPanel settingsPanel = createSettingsPanel();
-            panel.add(settingsPanel, BorderLayout.NORTH);
-            
-            // Create content type management panel
+
+            // Single, left-aligned, scrollable column of titled sections.
+            JPanel column = new JPanel();
+            column.setLayout(new BoxLayout(column, BoxLayout.Y_AXIS));
+            column.setBorder(BorderFactory.createEmptyBorder(12, 14, 12, 14));
+
+            column.add(createHeader());
+            column.add(Box.createVerticalStrut(10));
+            column.add(createSettingsPanel());
+            column.add(Box.createVerticalStrut(10));
+
             JPanel contentTypePanel = createContentTypePanel();
-            panel.add(contentTypePanel, BorderLayout.CENTER);
-            
+            contentTypePanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+            contentTypePanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 260));
+            column.add(contentTypePanel);
+
+            // Pin the column to the top-left so nothing floats in the centre.
+            JPanel holder = new JPanel(new BorderLayout());
+            holder.add(column, BorderLayout.NORTH);
+
+            JScrollPane scroll = new JScrollPane(holder,
+                    JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
+                    JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+            scroll.setBorder(null);
+            scroll.getVerticalScrollBar().setUnitIncrement(16);
+            panel.add(scroll, BorderLayout.CENTER);
+
             // Initialize listeners
             initListeners();
-            
+
             callbacks.printOutput("[" + PLUGIN_NAME + "] UI initialized successfully");
-            
+
         } catch (Exception e) {
             callbacks.printError("[" + PLUGIN_NAME + "] Error initializing UI: " + e.getMessage());
         }
+    }
+
+    /** Title + one-line description shown at the top of the tab. */
+    private JComponent createHeader() {
+        JPanel p = new JPanel();
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+        p.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JLabel title = new JLabel("XSSDetector");
+        title.setFont(title.getFont().deriveFont(Font.BOLD, 17f));
+        title.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JLabel sub = new JLabel("<html><body style='width:560px'>Fully contextual reflected-XSS scanner "
+                + "(HTML, attributes, JavaScript, CSS, JSON/JSONP) with live two-stage confirmation.</body></html>");
+        sub.setForeground(new Color(120, 120, 120));
+        sub.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        p.add(title);
+        p.add(Box.createVerticalStrut(4));
+        p.add(sub);
+        p.setMaximumSize(new Dimension(Integer.MAX_VALUE, p.getPreferredSize().height));
+        return p;
+    }
+
+    /** Titled section whose body is left-aligned and never stretches vertically. */
+    private JPanel section(String title, JComponent body) {
+        JPanel s = new JPanel(new BorderLayout());
+        s.setBorder(BorderFactory.createTitledBorder(title));
+        body.setAlignmentX(Component.LEFT_ALIGNMENT);
+        s.add(body, BorderLayout.CENTER);
+        s.setAlignmentX(Component.LEFT_ALIGNMENT);
+        s.setMaximumSize(new Dimension(Integer.MAX_VALUE, s.getPreferredSize().height));
+        return s;
+    }
+
+    /** A left-aligned grid of controls with a fixed number of columns. */
+    private JPanel grid(int cols, Component... items) {
+        JPanel p = new JPanel(new GridLayout(0, cols, 18, 4));
+        for (Component c : items) {
+            p.add(c);
+        }
+        p.setAlignmentX(Component.LEFT_ALIGNMENT);
+        return p;
     }
 
     /**
      * Create clean settings panel
      */
     private JPanel createSettingsPanel() {
-        JPanel panel = new JPanel(new GridBagLayout());
-        panel.setBorder(BorderFactory.createTitledBorder("XSS Detection Settings"));
-        
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(5, 5, 5, 5);
-        gbc.anchor = GridBagConstraints.WEST;
-        
-        // Core detection settings
-        scopeOnly = new JCheckBox("Scope Only", settings.getScopeOnly());
-        aggressiveMode = new JCheckBox("Aggressive Mode", settings.getAggressiveMode());
-        checkContext = new JCheckBox("Context Analysis", settings.getCheckContext());
-        
-        // Modern detection settings
-        modernDetection = new JCheckBox("Modern Detection", settings.getModernDetection());
-        domXssDetection = new JCheckBox("DOM XSS Detection", settings.getDomXssDetection());
-        cspAnalysis = new JCheckBox("CSP Analysis", settings.getCspAnalysis());
-        
-        // Advanced settings
-        enableWAFBypass = new JCheckBox("WAF Bypass", settings.getEnableWAFBypass());
-        enableFrameworkSpecific = new JCheckBox("Framework Specific", settings.getEnableFrameworkSpecific());
-        enableEncodingBypass = new JCheckBox("Encoding Bypass", settings.getEnableEncodingBypass());
-        enableCSPBypass = new JCheckBox("CSP Bypass", settings.getEnableCSPBypass());
-        enablePolyglotPayloads = new JCheckBox("Polyglot Payloads", settings.getEnablePolyglotPayloads());
-        enableBrowserSpecific = new JCheckBox("Browser-Specific Payloads", settings.getEnableBrowserSpecific());
-        enableJSFucker = new JCheckBox("JSF*ck Payloads", settings.getEnableJSFucker());
-        enablePrototypePollution = new JCheckBox("Prototype Pollution Payloads", settings.getEnablePrototypePollution());
-        enablePostMessageXSS = new JCheckBox("postMessage Payloads", settings.getEnablePostMessageXSS());
-        enableWebComponents = new JCheckBox("Web Components Payloads", settings.getEnableWebComponents());
-        enableShadowDOM = new JCheckBox("Shadow DOM Payloads", settings.getEnableShadowDOM());
-        enableWebAssembly = new JCheckBox("WebAssembly Payloads", settings.getEnableWebAssembly());
-        enableModernBrowserAPI = new JCheckBox("Modern Browser API Payloads", settings.getEnableModernBrowserAPI());
-        
-        // Reporting settings
-        detailedReporting = new JCheckBox("Detailed Reporting", settings.getDetailedReporting());
-        exploitGeneration = new JCheckBox("Exploit Generation", settings.getExploitGeneration());
-        verboseLogging = new JCheckBox("Verbose Logging", settings.getVerboseLogging());
-        
-        // Add components to panel
-        gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 2;
-        panel.add(new JLabel("Core Detection:"), gbc);
-        
-        gbc.gridx = 0; gbc.gridy = 1; gbc.gridwidth = 1;
-        panel.add(scopeOnly, gbc);
-        
-        gbc.gridx = 1; gbc.gridy = 1;
-        panel.add(aggressiveMode, gbc);
-        
-        gbc.gridx = 0; gbc.gridy = 2;
-        panel.add(checkContext, gbc);
-        
-        gbc.gridx = 1; gbc.gridy = 2;
-        panel.add(modernDetection, gbc);
-        
-        gbc.gridx = 0; gbc.gridy = 3;
-        panel.add(domXssDetection, gbc);
-        
-        gbc.gridx = 1; gbc.gridy = 3;
-        panel.add(cspAnalysis, gbc);
-        
-        gbc.gridx = 0; gbc.gridy = 4; gbc.gridwidth = 2;
-        panel.add(new JLabel("Advanced Detection:"), gbc);
-        
-        gbc.gridx = 0; gbc.gridy = 5; gbc.gridwidth = 1;
-        panel.add(enableWAFBypass, gbc);
-        
-        gbc.gridx = 1; gbc.gridy = 5;
-        panel.add(enableFrameworkSpecific, gbc);
-        
-        gbc.gridx = 0; gbc.gridy = 6;
-        panel.add(enableEncodingBypass, gbc);
-        
-        gbc.gridx = 1; gbc.gridy = 6;
-        panel.add(enableCSPBypass, gbc);
+        // --- Create controls (field names unchanged -> listeners stay wired) ---
+        scopeOnly = new JCheckBox("Scan in-scope targets only", settings.getScopeOnly());
+        aggressiveMode = new JCheckBox("Aggressive mode (extra bypass probes)", settings.getAggressiveMode());
+        checkContext = new JCheckBox("Contextual reflection engine  (Reflector-style + JSON/JSONP)", settings.getCheckContext());
 
-        // Payload packs (advanced coverage)
-        gbc.gridx = 0; gbc.gridy = 7; gbc.gridwidth = 2;
-        panel.add(new JLabel("Payload Packs:"), gbc);
+        modernDetection = new JCheckBox("Modern framework detection", settings.getModernDetection());
+        domXssDetection = new JCheckBox("DOM XSS (source-to-sink)", settings.getDomXssDetection());
+        cspAnalysis = new JCheckBox("CSP analysis", settings.getCspAnalysis());
 
-        gbc.gridwidth = 1;
-        gbc.gridx = 0; gbc.gridy = 8;
-        panel.add(enablePolyglotPayloads, gbc);
-        gbc.gridx = 1; gbc.gridy = 8;
-        panel.add(enableBrowserSpecific, gbc);
+        enableWAFBypass = new JCheckBox("WAF bypass", settings.getEnableWAFBypass());
+        enableFrameworkSpecific = new JCheckBox("Framework-specific", settings.getEnableFrameworkSpecific());
+        enableEncodingBypass = new JCheckBox("Encoding bypass", settings.getEnableEncodingBypass());
+        enableCSPBypass = new JCheckBox("CSP bypass", settings.getEnableCSPBypass());
+        enablePolyglotPayloads = new JCheckBox("Polyglot", settings.getEnablePolyglotPayloads());
+        enableBrowserSpecific = new JCheckBox("Browser-specific", settings.getEnableBrowserSpecific());
+        enableJSFucker = new JCheckBox("JSFuck", settings.getEnableJSFucker());
+        enablePrototypePollution = new JCheckBox("Prototype pollution", settings.getEnablePrototypePollution());
+        enablePostMessageXSS = new JCheckBox("postMessage", settings.getEnablePostMessageXSS());
+        enableWebComponents = new JCheckBox("Web components", settings.getEnableWebComponents());
+        enableShadowDOM = new JCheckBox("Shadow DOM", settings.getEnableShadowDOM());
+        enableWebAssembly = new JCheckBox("WebAssembly", settings.getEnableWebAssembly());
+        enableModernBrowserAPI = new JCheckBox("Modern browser API", settings.getEnableModernBrowserAPI());
 
-        gbc.gridx = 0; gbc.gridy = 9;
-        panel.add(enableJSFucker, gbc);
-        gbc.gridx = 1; gbc.gridy = 9;
-        panel.add(enablePrototypePollution, gbc);
+        detailedReporting = new JCheckBox("Detailed reporting", settings.getDetailedReporting());
+        exploitGeneration = new JCheckBox("Exploit generation", settings.getExploitGeneration());
+        verboseLogging = new JCheckBox("Verbose logging", settings.getVerboseLogging());
 
-        gbc.gridx = 0; gbc.gridy = 10;
-        panel.add(enablePostMessageXSS, gbc);
-        gbc.gridx = 1; gbc.gridy = 10;
-        panel.add(enableWebComponents, gbc);
+        // Helpful tooltips
+        checkContext.setToolTipText("Primary engine: probes each parameter with a canary + break-out characters, "
+                + "classifies the reflection context, and confirms with a live proof-of-concept before reporting.");
+        aggressiveMode.setToolTipText("Also fire additional encoding/WAF-bypass payloads.");
+        scopeOnly.setToolTipText("Restrict all scanning to items inside Burp's target scope.");
 
-        gbc.gridx = 0; gbc.gridy = 11;
-        panel.add(enableShadowDOM, gbc);
-        gbc.gridx = 1; gbc.gridy = 11;
-        panel.add(enableWebAssembly, gbc);
+        // --- Assemble the column of titled sections ---
+        JPanel col = new JPanel();
+        col.setLayout(new BoxLayout(col, BoxLayout.Y_AXIS));
+        col.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        gbc.gridx = 0; gbc.gridy = 12;
-        panel.add(enableModernBrowserAPI, gbc);
-        
-        gbc.gridx = 0; gbc.gridy = 15; gbc.gridwidth = 2;
-        panel.add(new JLabel("Reporting:"), gbc);
-        
-        gbc.gridx = 0; gbc.gridy = 16; gbc.gridwidth = 1;
-        panel.add(detailedReporting, gbc);
-        
-        gbc.gridx = 1; gbc.gridy = 16;
-        panel.add(exploitGeneration, gbc);
-        
-        gbc.gridx = 0; gbc.gridy = 17;
-        panel.add(verboseLogging, gbc);
-        
-        // ADVANCED: Add cache management button
-        gbc.gridx = 0; gbc.gridy = 18; gbc.gridwidth = 2;
-        JButton clearCacheButton = new JButton("Clear Response Cache");
+        col.add(section("Scanning", grid(2, scopeOnly, aggressiveMode)));
+        col.add(Box.createVerticalStrut(8));
+
+        // Detection engines, with the primary engine highlighted and described.
+        JPanel engines = new JPanel();
+        engines.setLayout(new BoxLayout(engines, BoxLayout.Y_AXIS));
+        checkContext.setFont(checkContext.getFont().deriveFont(Font.BOLD));
+        checkContext.setAlignmentX(Component.LEFT_ALIGNMENT);
+        engines.add(checkContext);
+        JLabel engineNote = new JLabel("<html><body style='width:540px;color:gray'>"
+                + "Injects a canary + break-out probe, classifies the exact context "
+                + "(HTML / attribute / JS / CSS / JSON), and verifies a live PoC before reporting "
+                + "&mdash; near-zero false positives.</body></html>");
+        engineNote.setAlignmentX(Component.LEFT_ALIGNMENT);
+        engineNote.setBorder(BorderFactory.createEmptyBorder(2, 22, 6, 0));
+        engines.add(engineNote);
+        JPanel otherEngines = grid(3, modernDetection, domXssDetection, cspAnalysis);
+        otherEngines.setAlignmentX(Component.LEFT_ALIGNMENT);
+        engines.add(otherEngines);
+        col.add(section("Detection engines", engines));
+        col.add(Box.createVerticalStrut(8));
+
+        col.add(section("Payload packs (WAF / filter bypass)", grid(3,
+                enableWAFBypass, enableFrameworkSpecific, enableEncodingBypass,
+                enableCSPBypass, enablePolyglotPayloads, enableBrowserSpecific,
+                enableJSFucker, enablePrototypePollution, enablePostMessageXSS,
+                enableWebComponents, enableShadowDOM, enableWebAssembly,
+                enableModernBrowserAPI)));
+        col.add(Box.createVerticalStrut(8));
+
+        col.add(section("Reporting", grid(3, detailedReporting, exploitGeneration, verboseLogging)));
+        col.add(Box.createVerticalStrut(8));
+
+        // Maintenance actions.
+        JButton clearCacheButton = new JButton("Clear response cache");
         clearCacheButton.addActionListener(e -> {
             ResponseCache cache = EnhancedAggressive.getResponseCache();
             if (cache != null) {
@@ -473,15 +490,14 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 callbacks.printOutput("[" + PLUGIN_NAME + "] Response cache cleared");
             }
         });
-        panel.add(clearCacheButton, gbc);
-        
-        // ADVANCED: Add statistics display
-        gbc.gridx = 0; gbc.gridy = 19; gbc.gridwidth = 2;
-        JButton showStatsButton = new JButton("Show Cache Statistics");
+        JButton showStatsButton = new JButton("Show cache statistics");
         showStatsButton.addActionListener(e -> showCacheStatistics());
-        panel.add(showStatsButton, gbc);
-        
-        return panel;
+        JPanel maint = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        maint.add(clearCacheButton);
+        maint.add(showStatsButton);
+        col.add(section("Maintenance", maint));
+
+        return col;
     }
     
     /**
