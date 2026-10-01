@@ -28,9 +28,9 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
     private final ResultsTableModel model = new ResultsTableModel();
     private final JTable table = new JTable(model);
 
-    private final JTextArea requestView = new JTextArea();
-    private final JTextArea responseView = new JTextArea();
     private final JLabel pocBar = new JLabel(" ");
+    private final MessageEditor reqEditor = new MessageEditor("Request");
+    private final MessageEditor respEditor = new MessageEditor("Response");
 
     private final JTextField search = new JTextField(14);
     private final JCheckBox fHigh = new JCheckBox("High", true);
@@ -78,66 +78,26 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         JScrollPane tableScroll = new JScrollPane(table);
         tableScroll.setBorder(BorderFactory.createTitledBorder("Findings (live)"));
 
-        requestView.setEditable(false);
-        responseView.setEditable(false);
-        Font mono = new Font(Font.MONOSPACED, Font.PLAIN, 12);
-        requestView.setFont(mono);
-        responseView.setFont(mono);
-        requestView.setLineWrap(true);
-        responseView.setLineWrap(true);
-
-        JTabbedPane viewer = new JTabbedPane();
-        viewer.addTab("Request", new JScrollPane(requestView));
-        viewer.addTab("Response", new JScrollPane(responseView));
-
         // PoC / location bar: the exploit payload and where it landed.
         pocBar.setBorder(BorderFactory.createEmptyBorder(2, 4, 4, 4));
         pocBar.setFont(pocBar.getFont().deriveFont(Font.PLAIN));
 
+        // Burp-style layout: Request on the left, Response on the right.
+        JSplitPane lr = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, reqEditor, respEditor);
+        lr.setResizeWeight(0.5);
+        lr.setBorder(null);
+
         JPanel viewerPanel = new JPanel(new BorderLayout());
-        viewerPanel.setBorder(BorderFactory.createTitledBorder("Selected finding - PoC highlighted in Request & Response"));
+        viewerPanel.setBorder(BorderFactory.createTitledBorder(
+                "Selected finding - payload highlighted; search each pane, jump between matches"));
         viewerPanel.add(pocBar, BorderLayout.NORTH);
-        viewerPanel.add(viewer, BorderLayout.CENTER);
+        viewerPanel.add(lr, BorderLayout.CENTER);
 
         JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, tableScroll, viewerPanel);
-        split.setResizeWeight(0.55);
-        split.setDividerLocation(300);
+        split.setResizeWeight(0.5);
+        split.setDividerLocation(280);
         split.setBorder(null);
         return split;
-    }
-
-    private static final javax.swing.text.Highlighter.HighlightPainter HL_RESP =
-            new javax.swing.text.DefaultHighlighter.DefaultHighlightPainter(new Color(0xFF, 0xF1, 0x76));
-    private static final javax.swing.text.Highlighter.HighlightPainter HL_REQ =
-            new javax.swing.text.DefaultHighlighter.DefaultHighlightPainter(new Color(0xA6, 0xE2, 0x2E));
-
-    /** Highlight a term in a text area and scroll so the first match is visible. */
-    private void highlight(JTextArea area, String term, javax.swing.text.Highlighter.HighlightPainter painter) {
-        area.getHighlighter().removeAllHighlights();
-        if (term == null || term.isEmpty()) {
-            return;
-        }
-        String text = area.getText();
-        int idx = text.indexOf(term);
-        if (idx < 0) {
-            // fall back to a shorter, distinctive slice (payloads can be re-encoded)
-            String probe = term.length() > 12 ? term.substring(0, 12) : term;
-            idx = text.indexOf(probe);
-            if (idx >= 0) {
-                term = probe;
-            }
-        }
-        if (idx < 0) {
-            area.setCaretPosition(0);
-            return;
-        }
-        try {
-            area.getHighlighter().addHighlight(idx, idx + term.length(), painter);
-            area.setCaretPosition(Math.min(text.length(), idx + term.length()));
-            area.moveCaretPosition(idx); // selection view scrolls the match into view
-        } catch (Exception ignored) {
-            area.setCaretPosition(0);
-        }
     }
 
     private void installContextMenu() {
@@ -333,22 +293,14 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         int row = table.getSelectedRow();
         XssFinding f = model.getRow(row);
         if (f == null) {
-            requestView.setText("");
-            responseView.setText("");
-            requestView.getHighlighter().removeAllHighlights();
-            responseView.getHighlighter().removeAllHighlights();
+            reqEditor.setMessage(null, null);
+            respEditor.setMessage(null, null);
             pocBar.setText(" ");
             return;
         }
-        requestView.setText(f.request != null ? new String(f.request, StandardCharsets.ISO_8859_1)
-                : "(request not captured)");
-        responseView.setText(f.response != null ? new String(f.response, StandardCharsets.ISO_8859_1)
-                : "(response not captured)");
-
-        // Highlight the injected value in the request and the reflected payload
-        // in the response, scrolling each to the exact location of the finding.
-        highlight(requestView, f.reqHighlight, HL_REQ);
-        highlight(responseView, f.respHighlight, HL_RESP);
+        // Load request (left) / response (right) and auto-navigate to the payload.
+        reqEditor.setMessage(f.request, f.reqHighlight);
+        respEditor.setMessage(f.response, f.respHighlight);
 
         boolean confirmed = XssFinding.STATUS_CONFIRMED.equals(f.status);
         String label = confirmed
@@ -392,6 +344,166 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
             return "\"" + s.replace("\"", "\"\"") + "\"";
         }
         return s;
+    }
+
+    // ---- Burp-style HTTP message editor (read-only) with find + jump-to ----
+
+    private static final class MessageEditor extends JPanel {
+        private final JTextArea area = new JTextArea();
+        private final JTextField find = new JTextField(10);
+        private final JLabel count = new JLabel("");
+        private final List<int[]> matches = new ArrayList<>();
+        private int current = -1;
+
+        private static final javax.swing.text.Highlighter.HighlightPainter PAYLOAD =
+                new javax.swing.text.DefaultHighlighter.DefaultHighlightPainter(new Color(0xFF, 0xE0, 0x66));
+        private static final javax.swing.text.Highlighter.HighlightPainter MATCH =
+                new javax.swing.text.DefaultHighlighter.DefaultHighlightPainter(new Color(0xBF, 0xE3, 0xFF));
+        private static final javax.swing.text.Highlighter.HighlightPainter CURRENT =
+                new javax.swing.text.DefaultHighlighter.DefaultHighlightPainter(new Color(0x7F, 0xC8, 0xFF));
+
+        MessageEditor(String title) {
+            super(new BorderLayout());
+            setBorder(BorderFactory.createTitledBorder(title));
+
+            area.setEditable(false);
+            area.setLineWrap(true);
+            area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+            add(new JScrollPane(area), BorderLayout.CENTER);
+
+            JPanel bar = new JPanel(new BorderLayout(4, 0));
+            bar.add(new JLabel(" Search "), BorderLayout.WEST);
+            bar.add(find, BorderLayout.CENTER);
+            JButton prev = new JButton("▲");
+            JButton next = new JButton("▼");
+            prev.setMargin(new Insets(0, 6, 0, 6));
+            next.setMargin(new Insets(0, 6, 0, 6));
+            JPanel right = new JPanel(new FlowLayout(FlowLayout.LEFT, 3, 1));
+            right.add(prev);
+            right.add(next);
+            right.add(count);
+            bar.add(right, BorderLayout.EAST);
+            add(bar, BorderLayout.SOUTH);
+
+            find.addActionListener(e -> step(1));
+            prev.addActionListener(e -> step(-1));
+            next.addActionListener(e -> step(1));
+            find.getDocument().addDocumentListener(new DocumentListener() {
+                public void insertUpdate(DocumentEvent e) { runSearch(); }
+                public void removeUpdate(DocumentEvent e) { runSearch(); }
+                public void changedUpdate(DocumentEvent e) { runSearch(); }
+            });
+        }
+
+        void setMessage(byte[] data, String payload) {
+            area.setText(data != null ? new String(data, StandardCharsets.ISO_8859_1) : "");
+            area.getHighlighter().removeAllHighlights();
+            matches.clear();
+            current = -1;
+            count.setText("");
+            // Highlight the payload / reflected value and scroll to it.
+            String term = payload;
+            if (term != null && !term.isEmpty()) {
+                String text = area.getText();
+                int idx = text.indexOf(term);
+                if (idx < 0 && term.length() > 12) {
+                    term = term.substring(0, 12);
+                    idx = text.indexOf(term);
+                }
+                if (idx >= 0) {
+                    try {
+                        area.getHighlighter().addHighlight(idx, idx + term.length(), PAYLOAD);
+                        scrollTo(idx, idx + term.length());
+                    } catch (Exception ignored) {
+                        area.setCaretPosition(0);
+                    }
+                } else {
+                    area.setCaretPosition(0);
+                }
+            } else {
+                area.setCaretPosition(0);
+            }
+            if (find.getText() != null && !find.getText().isEmpty()) {
+                runSearch();
+            }
+        }
+
+        private void runSearch() {
+            area.getHighlighter().removeAllHighlights();
+            matches.clear();
+            current = -1;
+            // Re-add payload highlight if still present.
+            // (Recompute from scratch is simplest and cheap for these sizes.)
+            String q = find.getText();
+            String text = area.getText();
+            if (q != null && !q.isEmpty()) {
+                String hay = text.toLowerCase();
+                String needle = q.toLowerCase();
+                int from = 0;
+                while (true) {
+                    int idx = hay.indexOf(needle, from);
+                    if (idx < 0) {
+                        break;
+                    }
+                    matches.add(new int[]{idx, idx + q.length()});
+                    from = idx + Math.max(1, q.length());
+                    if (matches.size() > 5000) {
+                        break;
+                    }
+                }
+            }
+            try {
+                for (int[] m : matches) {
+                    area.getHighlighter().addHighlight(m[0], m[1], MATCH);
+                }
+            } catch (Exception ignored) {
+                // ignore highlight failures
+            }
+            count.setText(matches.isEmpty() ? (q == null || q.isEmpty() ? "" : "0") : ("1/" + matches.size()));
+            if (!matches.isEmpty()) {
+                current = 0;
+                markCurrent();
+            }
+        }
+
+        private void step(int dir) {
+            if (matches.isEmpty()) {
+                return;
+            }
+            current = (current + dir + matches.size()) % matches.size();
+            markCurrent();
+            count.setText((current + 1) + "/" + matches.size());
+        }
+
+        private void markCurrent() {
+            // Re-draw: all matches blue, current darker.
+            area.getHighlighter().removeAllHighlights();
+            try {
+                for (int i = 0; i < matches.size(); i++) {
+                    int[] m = matches.get(i);
+                    area.getHighlighter().addHighlight(m[0], m[1], i == current ? CURRENT : MATCH);
+                }
+            } catch (Exception ignored) {
+                // ignore
+            }
+            if (current >= 0 && current < matches.size()) {
+                int[] m = matches.get(current);
+                scrollTo(m[0], m[1]);
+            }
+        }
+
+        private void scrollTo(int start, int end) {
+            try {
+                area.setCaretPosition(Math.min(area.getText().length(), end));
+                area.moveCaretPosition(start);
+                java.awt.Rectangle r = area.modelToView(start);
+                if (r != null) {
+                    area.scrollRectToVisible(r);
+                }
+            } catch (Exception ignored) {
+                // best-effort scroll
+            }
+        }
     }
 
     // ---- table model ----
