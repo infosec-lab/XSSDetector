@@ -50,6 +50,10 @@ public class ContextualReflectionEngine {
     private final Settings settings;
     private final java.security.SecureRandom rng = new java.security.SecureRandom();
 
+    /** (host|path|type|param) spots already actively probed on browsed traffic. */
+    private final java.util.Set<String> liveProbed =
+            java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
     /** Break-out characters probed, in a fixed order. */
     private static final char[] SPECIALS = {
         '<', '>', '"', '\'', '`', '(', ')', '{', '}', ';', '/', '\\', '=', ':', ' ', '$'
@@ -77,34 +81,76 @@ public class ContextualReflectionEngine {
      * Run the contextual probe + live confirmation against a single insertion
      * point and return a confirmed reflected-XSS issue, or nothing.
      */
-    public List<IScanIssue> scan(IHttpRequestResponse baseRequestResponse, IScannerInsertionPoint insertionPoint) {
+    public List<IScanIssue> scan(IHttpRequestResponse baseRequestResponse, final IScannerInsertionPoint insertionPoint) {
         List<IScanIssue> issues = new ArrayList<>();
         if (baseRequestResponse == null || insertionPoint == null) {
             return issues;
         }
         try {
             IHttpService service = baseRequestResponse.getHttpService();
-            String tag = randomCanary();
-            String probe = buildProbe(tag);
+            Injector injector = value -> insertionPoint.buildRequest(helpers.stringToBytes(value));
 
-            byte[] probeRequest = insertionPoint.buildRequest(helpers.stringToBytes(probe));
-            IHttpRequestResponse probeRR = callbacks.makeHttpRequest(service, probeRequest);
-            if (probeRR == null || probeRR.getResponse() == null) {
+            ProbeResult pr = probe(injector, service);
+            if (pr == null || pr.best == null) {
+                return issues; // not reflected, or reflected but not exploitable
+            }
+
+            // STAGE 2 -- live confirmation. No issue without it.
+            Confirmation conf = confirm(injector, service, pr.best.poc);
+            if (conf == null || !conf.confirmed) {
+                if (settings != null && settings.getVerboseLogging()) {
+                    callbacks.printOutput("[XSSDetector] Contextual: candidate not confirmed ("
+                            + pr.best.contextLabel + ", param '" + insertionPoint.getInsertionPointName() + "')");
+                }
                 return issues;
             }
 
+            IScanIssue issue = buildDynamicIssue(insertionPoint.getInsertionPointName(),
+                    insertionTypeName(insertionPoint.getInsertionPointType()), "Scanner", pr.best, conf);
+            if (issue != null) {
+                issues.add(issue);
+                if (settings != null && settings.getVerboseLogging()) {
+                    callbacks.printOutput("[XSSDetector] Contextual: CONFIRMED reflected XSS in param '"
+                            + insertionPoint.getInsertionPointName() + "' (" + pr.best.contextLabel + ")");
+                }
+            }
+        } catch (Exception e) {
+            if (settings != null && settings.getVerboseLogging()) {
+                callbacks.printError("[XSSDetector] Contextual: " + e.getMessage());
+            }
+        }
+        return issues;
+    }
+
+    /** How a probe/confirm value is placed into the request (insertion point or raw parameter). */
+    private interface Injector {
+        byte[] build(String value);
+    }
+
+    private static final class ProbeResult {
+        IHttpRequestResponse probeRR;
+        Finding best;
+    }
+
+    /** Stage 1: send the measurement probe and pick the most exploitable reflection site. */
+    private ProbeResult probe(Injector injector, IHttpService service) {
+        try {
+            String tag = randomCanary();
+            byte[] probeRequest = injector.build(buildProbe(tag));
+            IHttpRequestResponse probeRR = callbacks.makeHttpRequest(service, probeRequest);
+            if (probeRR == null || probeRR.getResponse() == null) {
+                return null;
+            }
             byte[] respBytes = probeRR.getResponse();
             IResponseInfo respInfo = helpers.analyzeResponse(respBytes);
-            int bodyOffset = respInfo.getBodyOffset();
-            String body = new String(Arrays.copyOfRange(respBytes, bodyOffset, respBytes.length), StandardCharsets.UTF_8);
-
+            String body = new String(Arrays.copyOfRange(respBytes, respInfo.getBodyOffset(), respBytes.length),
+                    StandardCharsets.UTF_8);
             MimeInfo mime = classifyMime(respInfo);
 
             List<Integer> sites = reflectionSites(body, tag);
             if (sites.isEmpty()) {
-                return issues; // input not reflected at all
+                return null;
             }
-
             Finding best = null;
             for (int siteStart : sites) {
                 Finding f = evaluateSite(body, siteStart, tag, mime);
@@ -115,30 +161,98 @@ public class ContextualReflectionEngine {
                     break;
                 }
             }
-            if (best == null) {
-                return issues;
-            }
+            ProbeResult pr = new ProbeResult();
+            pr.probeRR = probeRR;
+            pr.best = best;
+            return pr;
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
-            // STAGE 2 -- live confirmation. No issue without it.
-            Confirmation conf = confirm(insertionPoint, service, best.poc);
-            if (conf == null || !conf.confirmed) {
-                if (settings != null && settings.getVerboseLogging()) {
-                    callbacks.printOutput("[ContextualReflectionEngine] Candidate not confirmed live ("
-                            + best.contextLabel + ", " + insertionPoint.getInsertionPointName() + ") -- suppressed to avoid false positive.");
+    /**
+     * Real-time active confirmation on browsed/proxied traffic (opt-in). For each
+     * reflected request parameter it runs the same probe-and-confirm as the active
+     * scanner, so genuine reflected XSS is reported as Confirmed just by browsing.
+     * Each (host, path, parameter) is probed at most once per session.
+     */
+    public void liveConfirm(IHttpRequestResponse rr, String source) {
+        try {
+            if (rr == null || rr.getRequest() == null || rr.getResponse() == null) {
+                return;
+            }
+            IResponseInfo respInfo = helpers.analyzeResponse(rr.getResponse());
+            MimeInfo mime = classifyMime(respInfo);
+            String ct = mime.contentType;
+            boolean textual = ct.isEmpty() || ct.contains("html") || ct.contains("json")
+                    || ct.contains("javascript") || ct.contains("xml") || ct.contains("text");
+            if (!textual) {
+                return;
+            }
+            byte[] respBytes = rr.getResponse();
+            String body = new String(Arrays.copyOfRange(respBytes, respInfo.getBodyOffset(), respBytes.length),
+                    StandardCharsets.UTF_8);
+
+            IRequestInfo reqInfo = helpers.analyzeRequest(rr);
+            final byte[] baseRequest = rr.getRequest();
+            final IHttpService service = rr.getHttpService();
+            String host = service != null ? service.getHost() : "";
+            String path = reqInfo.getUrl() != null ? reqInfo.getUrl().getPath() : "";
+
+            int done = 0;
+            for (IParameter p : reqInfo.getParameters()) {
+                if (done >= 5) {
+                    break; // keep browse-time load bounded
                 }
-                return issues;
-            }
+                final byte type = p.getType();
+                if (type != IParameter.PARAM_URL && type != IParameter.PARAM_BODY && type != IParameter.PARAM_COOKIE) {
+                    continue; // other vector types are covered by the active scanner
+                }
+                String value = p.getValue();
+                if (value == null || value.length() < 3) {
+                    continue;
+                }
+                String decoded = value;
+                try {
+                    String d = helpers.urlDecode(value);
+                    if (d != null) {
+                        decoded = d;
+                    }
+                } catch (Exception ignored) {
+                    // use raw value
+                }
+                if (body.indexOf(decoded) < 0 && body.indexOf(value) < 0) {
+                    continue; // not reflected -> do not probe
+                }
+                String key = host + "|" + path + "|" + type + "|" + p.getName();
+                if (!liveProbed.add(key)) {
+                    continue; // already probed this spot in this session
+                }
+                final String name = p.getName();
+                Injector injector = v -> helpers.updateParameter(baseRequest,
+                        helpers.buildParameter(name, helpers.urlEncode(v), type));
 
-            IScanIssue issue = buildDynamicIssue(baseRequestResponse, insertionPoint, best, conf);
-            if (issue != null) {
-                issues.add(issue);
+                ProbeResult pr = probe(injector, service);
+                if (pr == null || pr.best == null) {
+                    done++;
+                    continue;
+                }
+                Confirmation conf = confirm(injector, service, pr.best.poc);
+                if (conf != null && conf.confirmed) {
+                    IScanIssue issue = buildDynamicIssue(name, insertionTypeName(type), source, pr.best, conf);
+                    if (issue != null) {
+                        callbacks.addScanIssue(issue);
+                        callbacks.printOutput("[XSSDetector] Live-confirmed reflected XSS: param '" + name
+                                + "' (" + pr.best.contextLabel + ") at " + host + path);
+                    }
+                }
+                done++;
             }
         } catch (Exception e) {
             if (settings != null && settings.getVerboseLogging()) {
-                callbacks.printError("[ContextualReflectionEngine] " + e.getMessage());
+                callbacks.printError("[XSSDetector] liveConfirm: " + e.getMessage());
             }
         }
-        return issues;
     }
 
     /**
@@ -800,12 +914,12 @@ public class ContextualReflectionEngine {
     // Stage 2: live confirmation of the proof-of-concept
     // ------------------------------------------------------------------
 
-    private Confirmation confirm(IScannerInsertionPoint ip, IHttpService service, String poc) {
+    private Confirmation confirm(Injector injector, IHttpService service, String poc) {
         try {
             String lm = randomCanary();
             String rm = randomCanary();
             String value = lm + poc + rm;
-            byte[] request = ip.buildRequest(helpers.stringToBytes(value));
+            byte[] request = injector.build(value);
             IHttpRequestResponse rr = callbacks.makeHttpRequest(service, request);
             if (rr == null || rr.getResponse() == null) {
                 return null;
@@ -863,13 +977,11 @@ public class ContextualReflectionEngine {
     // Dynamic, remediation-free issue construction
     // ------------------------------------------------------------------
 
-    private IScanIssue buildDynamicIssue(IHttpRequestResponse baseRR, IScannerInsertionPoint ip,
+    private IScanIssue buildDynamicIssue(String param, String insType, String source,
                                          Finding f, Confirmation conf) {
         try {
             IHttpRequestResponse evidence = conf.requestResponse;
             URL url = helpers.analyzeRequest(evidence).getUrl();
-            String param = ip.getInsertionPointName();
-            String insType = insertionTypeName(ip.getInsertionPointType());
 
             // Markers over the live request value and the reflected payload.
             List<int[]> reqMarkers = markers(evidence.getRequest(), conf.injectedValue);
@@ -881,7 +993,8 @@ public class ContextualReflectionEngine {
                 marked = evidence;
             }
 
-            String name = "Reflected XSS (" + f.contextLabel + ") - " + param;
+            // Professional, Burp-consistent issue name; parameter/context in the detail.
+            String name = "Cross-Site Scripting (Reflected)";
             String detail = renderDetail(f, param, insType);
 
             // Feed the Live Results view (confirmed by live PoC).
@@ -896,7 +1009,7 @@ public class ContextualReflectionEngine {
                 FindingStore.get().add(new XssFinding(
                         f.severity, XssFinding.STATUS_CONFIRMED, f.contextLabel, param,
                         method, svc != null ? svc.getHost() : "", url != null ? url.toString() : "",
-                        "Scanner", f.poc, evidence.getRequest(), evidence.getResponse()));
+                        source, f.poc, evidence.getRequest(), evidence.getResponse()));
             } catch (Exception ignored) {
                 // never let reporting-side wiring break issue creation
             }
@@ -915,8 +1028,10 @@ public class ContextualReflectionEngine {
     /** Only live, dynamic evidence -- no remediation or static background. */
     private String renderDetail(Finding f, String param, String insType) {
         StringBuilder d = new StringBuilder();
-        d.append("<p><b>Confirmed reflected XSS</b> - detected by live context probe and verified by injecting the proof-of-concept.</p>");
-        d.append("<p><b>Parameter:</b> <code>").append(esc(param)).append("</code> (").append(esc(insType)).append(")</p>");
+        d.append("<p><b>Confirmed reflected cross-site scripting</b> - detected by a live context probe and verified by injecting the proof-of-concept.</p>");
+        // Parameter kept as plain text immediately after the label so Burp and the
+        // de-duplicator read it correctly (distinct parameters stay distinct issues).
+        d.append("<p><b>Parameter:</b> ").append(esc(param)).append(" <i>(").append(esc(insType)).append(")</i></p>");
         d.append("<p><b>Reflection context:</b> ").append(esc(f.contextLabel)).append("</p>");
         d.append("<p><b>Why it is exploitable:</b> ").append(esc(f.reason)).append("</p>");
 

@@ -14,6 +14,7 @@ class Settings {
     // Core settings
     private String scopeOnly;
     private String aggressiveMode;
+    private String autoConfirm;
     private String checkContext;
     private IBurpExtenderCallbacks callbacks;
     private ArrayList<Object[]> contentTypes;
@@ -97,6 +98,7 @@ class Settings {
         // Core settings
         scopeOnly = FALSE_CONST;
         aggressiveMode = FALSE_CONST;
+        autoConfirm = FALSE_CONST;
         checkContext = TRUE_CONST;
         
         // Essential detection
@@ -160,6 +162,9 @@ class Settings {
             
             aggressiveMode = callbacks.loadExtensionSetting("aggressiveMode");
             if (aggressiveMode == null) aggressiveMode = FALSE_CONST;
+
+            autoConfirm = callbacks.loadExtensionSetting("autoConfirm");
+            if (autoConfirm == null) autoConfirm = FALSE_CONST;
             
             checkContext = callbacks.loadExtensionSetting("checkContext");
             if (checkContext == null) checkContext = TRUE_CONST;
@@ -319,6 +324,7 @@ class Settings {
     // Core getters
     public Boolean getScopeOnly() { return Boolean.valueOf(scopeOnly); }
     public Boolean getAggressiveMode() { return Boolean.valueOf(aggressiveMode); }
+    public Boolean getAutoConfirm() { return Boolean.valueOf(autoConfirm); }
     public Boolean getCheckContext() { return Boolean.valueOf(checkContext); }
     
     // Detection getters
@@ -382,6 +388,11 @@ class Settings {
     public void setAggressiveMode(boolean aggressiveMode) {
         this.aggressiveMode = String.valueOf(aggressiveMode);
         callbacks.saveExtensionSetting("aggressiveMode", this.aggressiveMode);
+    }
+
+    public void setAutoConfirm(boolean autoConfirm) {
+        this.autoConfirm = String.valueOf(autoConfirm);
+        callbacks.saveExtensionSetting("autoConfirm", this.autoConfirm);
     }
 
     public void setCheckContext(boolean checkContext) {

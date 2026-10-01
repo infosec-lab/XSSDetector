@@ -40,6 +40,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
     // Core Detection Settings
     private JCheckBox scopeOnly;
     private JCheckBox aggressiveMode;
+    private JCheckBox autoConfirm;
     private JCheckBox checkContext;
     private JCheckBox modernDetection;
     private JCheckBox domXssDetection;
@@ -418,6 +419,10 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         // --- Create controls (field names unchanged -> listeners stay wired) ---
         scopeOnly = new JCheckBox("Scan in-scope targets only", settings.getScopeOnly());
         aggressiveMode = new JCheckBox("Aggressive mode (extra bypass probes)", settings.getAggressiveMode());
+        autoConfirm = new JCheckBox("Live confirm while browsing (sends probes)", settings.getAutoConfirm());
+        autoConfirm.setToolTipText("When on, reflected parameters seen in proxied traffic are actively "
+                + "probe-and-confirmed automatically, so reflected XSS is reported as Confirmed without a manual "
+                + "active scan. Sends a couple of test requests per reflected parameter; use with scope set.");
         checkContext = new JCheckBox("Contextual reflection engine  (context-aware, incl. JSON/JSONP)", settings.getCheckContext());
 
         modernDetection = new JCheckBox("Modern framework detection", settings.getModernDetection());
@@ -453,7 +458,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         col.setLayout(new BoxLayout(col, BoxLayout.Y_AXIS));
         col.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        col.add(section("Scanning", grid(2, scopeOnly, aggressiveMode)));
+        col.add(section("Scanning", grid(2, scopeOnly, aggressiveMode, autoConfirm)));
         col.add(Box.createVerticalStrut(8));
 
         // Detection engines, with the primary engine highlighted and described.
@@ -713,7 +718,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
     private void initListeners() {
         try {
             // CRITICAL: Verify all UI components are initialized before attaching listeners
-            if (scopeOnly == null || aggressiveMode == null || checkContext == null || 
+            if (scopeOnly == null || aggressiveMode == null || autoConfirm == null || checkContext == null ||
                 modernDetection == null || domXssDetection == null || cspAnalysis == null ||
                 enableWAFBypass == null || enableFrameworkSpecific == null || enableEncodingBypass == null ||
                 enableCSPBypass == null || enablePolyglotPayloads == null || enableBrowserSpecific == null ||
@@ -732,6 +737,9 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             });
             aggressiveMode.addActionListener(e -> {
                 if (settings != null) settings.setAggressiveMode(aggressiveMode.isSelected());
+            });
+            autoConfirm.addActionListener(e -> {
+                if (settings != null) settings.setAutoConfirm(autoConfirm.isSelected());
             });
             checkContext.addActionListener(e -> {
                 if (settings != null) settings.setCheckContext(checkContext.isSelected());
@@ -1372,6 +1380,14 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 // Confirmed when verified.
                 if (settings != null && settings.getCheckContext() && contextualEngine != null) {
                     contextualEngine.passiveReflections(messageInfo, toolName);
+
+                    // Opt-in: actively probe-and-confirm reflected parameters on
+                    // browsed traffic so genuine reflected XSS is reported as
+                    // Confirmed without a manual active scan. Never on Scanner
+                    // traffic (the active scanner already covers that path).
+                    if (settings.getAutoConfirm() && toolFlag != IBurpExtenderCallbacks.TOOL_SCANNER) {
+                        contextualEngine.liveConfirm(messageInfo, toolName);
+                    }
                 }
             } catch (Exception e) {
                 if (settings != null && settings.getVerboseLogging()) {
