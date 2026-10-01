@@ -79,6 +79,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
     private EnhancedDOMXSSDetector domXssDetector;
     private EnhancedClientSideAttackDetector clientSideDetector;
     private EnhancedAggressive aggressiveDetector;
+    private ContextualReflectionEngine contextualEngine;
     private AdvancedFilteringEngine filteringEngine;
     private ModernXSSAnalyzer modernXssAnalyzer;
     
@@ -258,6 +259,16 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 enginesInitialized++;
             } catch (Exception e) {
                 callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize EnhancedAggressive: " + e.getMessage());
+                enginesFailed++;
+            }
+
+            // Contextual reflection engine (Reflector-style probe-and-measure,
+            // extended to JSON/JSONP) -- the primary context-aware detector.
+            try {
+                this.contextualEngine = new ContextualReflectionEngine(helpers, callbacks, settings);
+                enginesInitialized++;
+            } catch (Exception e) {
+                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize ContextualReflectionEngine: " + e.getMessage());
                 enginesFailed++;
             }
 
@@ -2111,6 +2122,20 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         List<IScanIssue> issues = new ArrayList<>();
         
         try {
+            // Step 0: Contextual reflection engine -- Reflector-style per-character
+            // break-out analysis with full context classification (HTML, attribute,
+            // JS string/template, event handler, URL, CSS) and JSON/JSONP support.
+            if (settings.getCheckContext() && contextualEngine != null) {
+                try {
+                    List<IScanIssue> contextualIssues = contextualEngine.scan(requestResponse, insertionPoint);
+                    if (contextualIssues != null) {
+                        issues.addAll(contextualIssues);
+                    }
+                } catch (Exception e) {
+                    callbacks.printError("[" + PLUGIN_NAME + "] Error in contextual reflection engine: " + e.getMessage());
+                }
+            }
+
             // Step 1: Aggressive detection (if enabled)
             if (settings.getAggressiveMode() && aggressiveDetector != null) {
                 try {

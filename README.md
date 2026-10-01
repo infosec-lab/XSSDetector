@@ -20,7 +20,18 @@ source-to-sink analysis — with validated, reproducible findings.
 
 ## Features
 
-- **Context-aware analysis** — HTML, attribute, JavaScript, CSS, and URL contexts
+- **Contextual reflection engine** — a Reflector-style (elkokc/reflector) probe
+  that injects a unique canary interleaved with every break-out character, then
+  measures *exactly* which characters survive unencoded at each reflection point
+  and classifies the context with a real HTML/JS tokenizer
+- **Full context coverage** — HTML text, HTML comments, tag/attribute-name
+  positions, single/double/unquoted attribute values, URL attributes
+  (`javascript:` scheme), `on*` event handlers, inline `<script>` blocks,
+  JavaScript single/double/template strings, and `<style>`/CSS
+- **JSON & JSONP aware** — handles modern API responses that Reflector does not:
+  JSONP callback execution, JSON bodies rendered as HTML via wrong/sniffable
+  `Content-Type`, and JSON-string break-out, while correctly treating strict
+  `application/json` + `X-Content-Type-Options: nosniff` as non-exploitable
 - **Reflection validation** — confirms unencoded reflection before reporting (fewer false positives)
 - **DOM XSS detection** — client-side source-to-sink data-flow analysis
 - **Client-side checks** — postMessage, WebSocket, and template-injection patterns
@@ -60,11 +71,27 @@ Confirm the **XSSDetector** tab appears and that there are no errors in
 
 | Type | Method |
 |------|--------|
-| Reflected XSS | Context-aware injection with reflection validation |
+| Reflected XSS | Contextual probe (canary + break-out characters) with per-context exploitability analysis |
+| JSON / JSONP XSS | JSONP callback execution, JSON-rendered-as-HTML, and JSON string break-out (MIME/nosniff aware) |
 | DOM XSS | Source-to-sink data-flow analysis |
 | Stored XSS | Response pattern analysis on persisted input |
 | Template Injection | Client-side template/expression pattern detection |
 | WAF/Filter Bypass | Encoding and mutation technique variants |
+
+### How the contextual engine works
+
+For each insertion point the engine sends one probe of the form
+`CANARY c0 CANARY c1 CANARY … CANARY`, where each `c` is a break-out character
+(`< > " ' ` + `` ` `` + ` ( ) { } ; / \ = :` space `$`). Because the canary is pure
+`[a-z]` it passes through every output encoder unchanged, so splitting the
+reflected block on the canary reveals precisely how the application transformed
+each character (verbatim, HTML-entity-encoded, backslash-escaped, URL-encoded,
+or stripped). A forward HTML/JS tokenizer determines the reflection context, and
+exploitability is decided from the context plus the surviving characters — e.g. a
+double-quoted attribute is only reported when `"` is reflected unescaped, and an
+inline script string only when its delimiting quote survives unescaped (or
+`</script>` can terminate the element). Each finding ships with a ready,
+context-specific proof-of-concept payload.
 
 > Findings carry a confidence score and are gated behind a configurable threshold
 > to reduce false positives. As with any heuristic scanner, validate findings
