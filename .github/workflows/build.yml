@@ -37,6 +37,7 @@ jobs:
 
     - name: Build on Windows
       if: runner.os == 'Windows'
+      shell: cmd
       run: build.bat
 
     - name: Verify JAR file
