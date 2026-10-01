@@ -331,7 +331,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             JTabbedPane tabs = new JTabbedPane();
 
             // --- Tab 1: Live Results (real-time findings + smart filters) ---
-            liveResults = new LiveResultsPanel(FindingStore.get());
+            liveResults = new LiveResultsPanel(FindingStore.get(), callbacks);
             tabs.addTab("Live Results", liveResults);
 
             // --- Tab 2: Settings (left-aligned, scrollable sections) ---
@@ -1350,6 +1350,23 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             }
         } catch (Exception e) {
             // Continue processing if scope check fails
+        }
+
+        // Performance: XSS can only live in textual responses, so skip the whole
+        // passive pipeline for images, fonts, CSS, binaries and the like. This
+        // sharply cuts background work (threads/memory) while browsing.
+        try {
+            IResponseInfo ri = helpers.analyzeResponse(messageInfo.getResponse());
+            String inferred = ri.getInferredMimeType() != null ? ri.getInferredMimeType().toLowerCase() : "";
+            String stated = ri.getStatedMimeType() != null ? ri.getStatedMimeType().toLowerCase() : "";
+            String mt = inferred + " " + stated;
+            boolean textual = mt.contains("html") || mt.contains("json") || mt.contains("script")
+                    || mt.contains("xml") || mt.contains("text") || mt.contains("css");
+            if (!textual) {
+                return;
+            }
+        } catch (Exception e) {
+            // if we cannot classify, fall through and let the scan decide
         }
 
         // Get tool name for logging

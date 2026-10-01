@@ -21,8 +21,14 @@ The table fills in real time from two sources:
 
 Columns: Time · Severity · Status · Context · Parameter · URL · Source.
 
-Pick a row to see its **Request** / **Response** below (the payload is highlighted
-in the real Burp view too).
+Pick a row to see its **Request** / **Response** below: the injected value is
+highlighted in the request and the reflected payload in the response, and each
+pane scrolls to that spot automatically. A PoC bar shows the parameter, context
+and exploit payload. Right-click a row for **Send request to Repeater**, **Copy
+URL**, or **Copy PoC**.
+
+Reflections seen on error pages (HTTP 4xx/5xx) and plain navigation values
+(filenames, paths, URLs) are filtered out, so the list stays signal, not noise.
 
 ### Smart filters (right side)
 

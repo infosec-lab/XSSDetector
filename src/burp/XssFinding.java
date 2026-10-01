@@ -25,6 +25,12 @@ public final class XssFinding {
     public final byte[] request;
     public final byte[] response;
 
+    // Optional viewer/navigation extras (set after construction).
+    public String reqHighlight;   // substring to highlight+scroll-to in the request
+    public String respHighlight;  // substring to highlight+scroll-to in the response
+    public int port;
+    public boolean https;
+
     public XssFinding(String severity, String status, String context, String parameter,
                       String method, String host, String url, String source, String poc,
                       byte[] request, byte[] response) {

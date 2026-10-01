@@ -182,6 +182,9 @@ public class ContextualReflectionEngine {
                 return;
             }
             IResponseInfo respInfo = helpers.analyzeResponse(rr.getResponse());
+            if (respInfo.getStatusCode() >= 400) {
+                return; // don't probe off error-page reflections
+            }
             MimeInfo mime = classifyMime(respInfo);
             String ct = mime.contentType;
             boolean textual = ct.isEmpty() || ct.contains("html") || ct.contains("json")
@@ -209,7 +212,7 @@ public class ContextualReflectionEngine {
                     continue; // other vector types are covered by the active scanner
                 }
                 String value = p.getValue();
-                if (value == null || value.length() < 3) {
+                if (value == null || value.length() < 3 || looksNavigational(value)) {
                     continue;
                 }
                 String decoded = value;
@@ -269,6 +272,12 @@ public class ContextualReflectionEngine {
                 return;
             }
             IResponseInfo respInfo = helpers.analyzeResponse(rr.getResponse());
+            // Ignore error pages: a value echoed in a 4xx/5xx is not a usable
+            // reflection and only adds noise to the Live Results view.
+            short status = respInfo.getStatusCode();
+            if (status >= 400) {
+                return;
+            }
             MimeInfo mime = classifyMime(respInfo);
             String ct = mime.contentType;
             boolean textual = ct.isEmpty() || ct.contains("html") || ct.contains("json")
@@ -295,6 +304,9 @@ public class ContextualReflectionEngine {
                 if (value == null || value.length() < 4) {
                     continue;
                 }
+                if (looksNavigational(value)) {
+                    continue; // filenames/paths/URLs echoed back are not XSS candidates
+                }
                 String decoded = value;
                 try {
                     String d = helpers.urlDecode(value);
@@ -315,11 +327,18 @@ public class ContextualReflectionEngine {
                 if (c.ctx == Ctx.UNKNOWN || c.ctx == Ctx.PLAINTEXT) {
                     continue; // nothing actionable to flag
                 }
-                FindingStore.get().add(new XssFinding(
+                XssFinding xf = new XssFinding(
                         "Info", XssFinding.STATUS_REFLECTED, contextLabel(c), p.getName(),
                         method, host, url, source,
                         "Reflection seen while browsing - run an active scan to confirm.",
-                        rr.getRequest(), rr.getResponse()));
+                        rr.getRequest(), rr.getResponse());
+                xf.reqHighlight = value;    // the parameter value in the request
+                xf.respHighlight = decoded; // where it is reflected in the response
+                if (svc != null) {
+                    xf.port = svc.getPort();
+                    xf.https = "https".equalsIgnoreCase(svc.getProtocol());
+                }
+                FindingStore.get().add(xf);
                 reported++;
             }
         } catch (Exception e) {
@@ -349,6 +368,26 @@ public class ContextualReflectionEngine {
             case JSONP: return "JSONP callback";
             default: return "Reflection";
         }
+    }
+
+    /** True for values that are clearly navigation tokens (paths, filenames,
+     *  URLs) rather than user input worth flagging as an XSS candidate. */
+    private static boolean looksNavigational(String v) {
+        if (v == null) {
+            return false;
+        }
+        String s = v.trim().toLowerCase(Locale.ROOT);
+        if (s.isEmpty()) {
+            return false;
+        }
+        if (s.contains("://")) {
+            return true;
+        }
+        if (!s.matches("[a-z0-9_./:%-]+")) {
+            return false; // contains spaces/special chars -> likely real input, keep it
+        }
+        return s.contains("/")
+                || s.matches(".*\\.(html?|jspx?|php|aspx?|do|action|css|js|png|jpe?g|gif|svg|ico|json|xml|pdf|woff2?)$");
     }
 
     // ------------------------------------------------------------------
@@ -1006,10 +1045,17 @@ public class ContextualReflectionEngine {
                 } catch (Exception ignored) {
                     // method is best-effort
                 }
-                FindingStore.get().add(new XssFinding(
+                XssFinding xf = new XssFinding(
                         f.severity, XssFinding.STATUS_CONFIRMED, f.contextLabel, param,
                         method, svc != null ? svc.getHost() : "", url != null ? url.toString() : "",
-                        source, f.poc, evidence.getRequest(), evidence.getResponse()));
+                        source, f.poc, evidence.getRequest(), evidence.getResponse());
+                xf.reqHighlight = conf.injectedValue; // the injected probe value in the request
+                xf.respHighlight = f.poc;             // the payload as reflected in the response
+                if (svc != null) {
+                    xf.port = svc.getPort();
+                    xf.https = "https".equalsIgnoreCase(svc.getProtocol());
+                }
+                FindingStore.get().add(xf);
             } catch (Exception ignored) {
                 // never let reporting-side wiring break issue creation
             }

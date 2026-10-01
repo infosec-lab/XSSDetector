@@ -24,11 +24,13 @@ import java.util.Set;
 public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
 
     private final FindingStore store;
+    private final IBurpExtenderCallbacks callbacks;
     private final ResultsTableModel model = new ResultsTableModel();
     private final JTable table = new JTable(model);
 
     private final JTextArea requestView = new JTextArea();
     private final JTextArea responseView = new JTextArea();
+    private final JLabel pocBar = new JLabel(" ");
 
     private final JTextField search = new JTextField(14);
     private final JCheckBox fHigh = new JCheckBox("High", true);
@@ -42,9 +44,10 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
 
     private final SimpleDateFormat timeFmt = new SimpleDateFormat("HH:mm:ss");
 
-    public LiveResultsPanel(FindingStore store) {
+    public LiveResultsPanel(FindingStore store, IBurpExtenderCallbacks callbacks) {
         super(new BorderLayout(8, 8));
         this.store = store;
+        this.callbacks = callbacks;
         setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
         add(buildCenter(), BorderLayout.CENTER);
@@ -70,6 +73,7 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
                 showSelected();
             }
         });
+        installContextMenu();
 
         JScrollPane tableScroll = new JScrollPane(table);
         tableScroll.setBorder(BorderFactory.createTitledBorder("Findings (live)"));
@@ -85,13 +89,107 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         JTabbedPane viewer = new JTabbedPane();
         viewer.addTab("Request", new JScrollPane(requestView));
         viewer.addTab("Response", new JScrollPane(responseView));
-        viewer.setBorder(BorderFactory.createTitledBorder("Selected finding"));
 
-        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, tableScroll, viewer);
-        split.setResizeWeight(0.6);
+        // PoC / location bar: the exploit payload and where it landed.
+        pocBar.setBorder(BorderFactory.createEmptyBorder(2, 4, 4, 4));
+        pocBar.setFont(pocBar.getFont().deriveFont(Font.PLAIN));
+
+        JPanel viewerPanel = new JPanel(new BorderLayout());
+        viewerPanel.setBorder(BorderFactory.createTitledBorder("Selected finding - PoC highlighted in Request & Response"));
+        viewerPanel.add(pocBar, BorderLayout.NORTH);
+        viewerPanel.add(viewer, BorderLayout.CENTER);
+
+        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, tableScroll, viewerPanel);
+        split.setResizeWeight(0.55);
         split.setDividerLocation(300);
         split.setBorder(null);
         return split;
+    }
+
+    private static final javax.swing.text.Highlighter.HighlightPainter HL_RESP =
+            new javax.swing.text.DefaultHighlighter.DefaultHighlightPainter(new Color(0xFF, 0xF1, 0x76));
+    private static final javax.swing.text.Highlighter.HighlightPainter HL_REQ =
+            new javax.swing.text.DefaultHighlighter.DefaultHighlightPainter(new Color(0xA6, 0xE2, 0x2E));
+
+    /** Highlight a term in a text area and scroll so the first match is visible. */
+    private void highlight(JTextArea area, String term, javax.swing.text.Highlighter.HighlightPainter painter) {
+        area.getHighlighter().removeAllHighlights();
+        if (term == null || term.isEmpty()) {
+            return;
+        }
+        String text = area.getText();
+        int idx = text.indexOf(term);
+        if (idx < 0) {
+            // fall back to a shorter, distinctive slice (payloads can be re-encoded)
+            String probe = term.length() > 12 ? term.substring(0, 12) : term;
+            idx = text.indexOf(probe);
+            if (idx >= 0) {
+                term = probe;
+            }
+        }
+        if (idx < 0) {
+            area.setCaretPosition(0);
+            return;
+        }
+        try {
+            area.getHighlighter().addHighlight(idx, idx + term.length(), painter);
+            area.setCaretPosition(Math.min(text.length(), idx + term.length()));
+            area.moveCaretPosition(idx); // selection view scrolls the match into view
+        } catch (Exception ignored) {
+            area.setCaretPosition(0);
+        }
+    }
+
+    private void installContextMenu() {
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem toRepeater = new JMenuItem("Send request to Repeater");
+        toRepeater.addActionListener(e -> {
+            XssFinding f = model.getRow(table.getSelectedRow());
+            if (f != null && f.request != null && callbacks != null && !f.host.isEmpty()) {
+                try {
+                    callbacks.sendToRepeater(f.host, f.port > 0 ? f.port : (f.https ? 443 : 80),
+                            f.https, f.request, "XSS: " + f.parameter);
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(this, "Send to Repeater failed: " + ex.getMessage());
+                }
+            }
+        });
+        JMenuItem copyUrl = new JMenuItem("Copy URL");
+        copyUrl.addActionListener(e -> copyToClipboard(get(model.getRow(table.getSelectedRow()), true)));
+        JMenuItem copyPoc = new JMenuItem("Copy PoC payload");
+        copyPoc.addActionListener(e -> copyToClipboard(get(model.getRow(table.getSelectedRow()), false)));
+        menu.add(toRepeater);
+        menu.add(copyUrl);
+        menu.add(copyPoc);
+
+        table.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override public void mousePressed(java.awt.event.MouseEvent e) { maybeShow(e); }
+            @Override public void mouseReleased(java.awt.event.MouseEvent e) { maybeShow(e); }
+            private void maybeShow(java.awt.event.MouseEvent e) {
+                if (e.isPopupTrigger()) {
+                    int row = table.rowAtPoint(e.getPoint());
+                    if (row >= 0) {
+                        table.setRowSelectionInterval(row, row);
+                        menu.show(table, e.getX(), e.getY());
+                    }
+                }
+            }
+        });
+    }
+
+    private String get(XssFinding f, boolean url) {
+        if (f == null) return "";
+        return url ? f.url : f.poc;
+    }
+
+    private void copyToClipboard(String s) {
+        if (s == null || s.isEmpty()) return;
+        try {
+            Toolkit.getDefaultToolkit().getSystemClipboard()
+                    .setContents(new java.awt.datatransfer.StringSelection(s), null);
+        } catch (Exception ignored) {
+            // clipboard may be unavailable
+        }
     }
 
     private void setColWidths() {
@@ -237,14 +335,33 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         if (f == null) {
             requestView.setText("");
             responseView.setText("");
+            requestView.getHighlighter().removeAllHighlights();
+            responseView.getHighlighter().removeAllHighlights();
+            pocBar.setText(" ");
             return;
         }
         requestView.setText(f.request != null ? new String(f.request, StandardCharsets.ISO_8859_1)
                 : "(request not captured)");
         responseView.setText(f.response != null ? new String(f.response, StandardCharsets.ISO_8859_1)
                 : "(response not captured)");
-        requestView.setCaretPosition(0);
-        responseView.setCaretPosition(0);
+
+        // Highlight the injected value in the request and the reflected payload
+        // in the response, scrolling each to the exact location of the finding.
+        highlight(requestView, f.reqHighlight, HL_REQ);
+        highlight(responseView, f.respHighlight, HL_RESP);
+
+        boolean confirmed = XssFinding.STATUS_CONFIRMED.equals(f.status);
+        String label = confirmed
+                ? "<b>CONFIRMED</b> " + esc(f.severity) + " XSS"
+                : "<b>Reflected</b> (unconfirmed - run an active scan)";
+        String poc = confirmed ? "&nbsp; Payload: <code>" + esc(f.poc) + "</code>" : "";
+        pocBar.setText("<html>" + label + " &nbsp;|&nbsp; Parameter: <b>" + esc(f.parameter)
+                + "</b> &nbsp;|&nbsp; Context: " + esc(f.context) + poc + "</html>");
+    }
+
+    private static String esc(String s) {
+        if (s == null) return "";
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private void exportCsv() {
