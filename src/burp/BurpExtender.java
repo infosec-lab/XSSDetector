@@ -2120,7 +2120,10 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
      */
     private List<IScanIssue> performActiveXSSDetection(IHttpRequestResponse requestResponse, IScannerInsertionPoint insertionPoint) {
         List<IScanIssue> issues = new ArrayList<>();
-        
+        // Contextual-engine findings are already double-confirmed by a live probe,
+        // so they bypass the heuristic post-filter (Step 4) and are appended last.
+        List<IScanIssue> contextualConfirmed = new ArrayList<>();
+
         try {
             // Step 0: Contextual reflection engine -- Reflector-style per-character
             // break-out analysis with full context classification (HTML, attribute,
@@ -2129,7 +2132,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 try {
                     List<IScanIssue> contextualIssues = contextualEngine.scan(requestResponse, insertionPoint);
                     if (contextualIssues != null) {
-                        issues.addAll(contextualIssues);
+                        contextualConfirmed.addAll(contextualIssues);
                     }
                 } catch (Exception e) {
                     callbacks.printError("[" + PLUGIN_NAME + "] Error in contextual reflection engine: " + e.getMessage());
@@ -2225,9 +2228,15 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             callbacks.printError("[" + PLUGIN_NAME + "] Error in active XSS detection: " + e.getMessage());
         }
 
+        // Append live-confirmed contextual findings (not subject to the heuristic
+        // post-filter) so genuine, verified reflections are never dropped.
+        if (!contextualConfirmed.isEmpty()) {
+            issues.addAll(contextualConfirmed);
+        }
+
         return issues;
     }
-    
+
     /**
      * Create comprehensive vulnerability data from detection results
      */

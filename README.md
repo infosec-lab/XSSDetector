@@ -24,15 +24,23 @@ source-to-sink analysis — with validated, reproducible findings.
   that injects a unique canary interleaved with every break-out character, then
   measures *exactly* which characters survive unencoded at each reflection point
   and classifies the context with a real HTML/JS tokenizer
+- **Two-stage live confirmation (near-zero false positives)** — a candidate is
+  only reported after its context-specific proof-of-concept is injected for real
+  and observed reflected **verbatim and unescaped** in the response; anything the
+  application encodes, escapes, or a keyword/tag WAF blocks is suppressed
 - **Full context coverage** — HTML text, HTML comments, tag/attribute-name
   positions, single/double/unquoted attribute values, URL attributes
   (`javascript:` scheme), `on*` event handlers, inline `<script>` blocks,
-  JavaScript single/double/template strings, and `<style>`/CSS
+  JavaScript single/double/template strings, `<style>`/CSS, and rawtext/RCDATA
+  elements (`textarea`, `title`, `iframe`, `xmp`, …) where only the matching end
+  tag can break out — so inert reflections are never misreported
 - **JSON & JSONP aware** — handles modern API responses that Reflector does not:
   JSONP callback execution, JSON bodies rendered as HTML via wrong/sniffable
-  `Content-Type`, and JSON-string break-out, while correctly treating strict
-  `application/json` + `X-Content-Type-Options: nosniff` as non-exploitable
-- **Reflection validation** — confirms unencoded reflection before reporting (fewer false positives)
+  `Content-Type`, while correctly treating strict `application/json` +
+  `X-Content-Type-Options: nosniff` as non-exploitable
+- **Dynamic, evidence-only reports** — each finding shows live data only: the
+  reflection context, a per-character break-out table, the confirmed PoC, and the
+  live reflected snippet (no boilerplate background or remediation text)
 - **DOM XSS detection** — client-side source-to-sink data-flow analysis
 - **Client-side checks** — postMessage, WebSocket, and template-injection patterns
 - **Modern framework awareness** — React, Angular, Vue.js, GraphQL, WebSockets
@@ -80,18 +88,27 @@ Confirm the **XSSDetector** tab appears and that there are no errors in
 
 ### How the contextual engine works
 
-For each insertion point the engine sends one probe of the form
+Detection is a two-request, double-confirmed process per insertion point:
+
+**Stage 1 — Measure.** The engine sends one probe of the form
 `CANARY c0 CANARY c1 CANARY … CANARY`, where each `c` is a break-out character
 (`< > " ' ` + `` ` `` + ` ( ) { } ; / \ = :` space `$`). Because the canary is pure
 `[a-z]` it passes through every output encoder unchanged, so splitting the
 reflected block on the canary reveals precisely how the application transformed
 each character (verbatim, HTML-entity-encoded, backslash-escaped, URL-encoded,
-or stripped). A forward HTML/JS tokenizer determines the reflection context, and
-exploitability is decided from the context plus the surviving characters — e.g. a
-double-quoted attribute is only reported when `"` is reflected unescaped, and an
-inline script string only when its delimiting quote survives unescaped (or
-`</script>` can terminate the element). Each finding ships with a ready,
-context-specific proof-of-concept payload.
+or stripped). A forward HTML/JS tokenizer — which models rawtext/RCDATA elements,
+quoted/unquoted attributes, URL attributes, event handlers and JS
+string/template literals — fixes the exact reflection context. Exploitability is
+decided from the context plus the surviving characters (e.g. a double-quoted
+attribute only when `"` survives unescaped; an inline script string only when its
+delimiter survives unescaped or `</script>` can terminate the element).
+
+**Stage 2 — Confirm.** The context-specific proof-of-concept is injected for real
+and the response is checked for it reflected **verbatim and unescaped**. Only then
+is an issue raised. This catches keyword/tag WAFs that pass single characters but
+block whole payloads, and drives the false-positive rate to near zero. Each
+finding reports only this live evidence — context, per-character break-out table,
+confirmed PoC, and the highlighted reflection — with no remediation boilerplate.
 
 > Findings carry a confidence score and are gated behind a configurable threshold
 > to reduce false positives. As with any heuristic scanner, validate findings

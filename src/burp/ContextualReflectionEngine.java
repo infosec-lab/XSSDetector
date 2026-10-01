@@ -5,9 +5,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * ContextualReflectionEngine
@@ -16,64 +18,65 @@ import java.util.Map;
  * methodology and extended to cover modern applications and JSON/JSONP APIs
  * (which Reflector itself does not handle).
  *
- * Methodology (per insertion point, one probe request -- Reflector's
- * "aggressive mode" analogue):
+ * Detection is a two-request, double-confirmed process per insertion point, so
+ * a finding is only ever raised on a genuine, live break-out:
  *
- *   1. Inject a probe that interleaves a unique alphabetic canary with every
- *      break-out character:  CANARY c0 CANARY c1 CANARY ... c(n-1) CANARY.
- *      The canary is pure [a-z] so it survives every output encoder; splitting
- *      the reflected block on the canary yields, for each special character,
- *      the exact transformation the application applied to it at the point of
- *      reflection (verbatim, HTML-entity-encoded, backslash-escaped, URL-encoded
- *      or stripped).
+ *   STAGE 1 -- Measure. Inject a probe that interleaves a unique alphabetic
+ *   canary with every break-out character
+ *   (CANARY c0 CANARY c1 CANARY ... CANARY). The canary is pure [a-z] so it
+ *   survives every output encoder; splitting the reflected block on the canary
+ *   yields, for each special character, the exact transformation applied at the
+ *   point of reflection (verbatim, HTML-entity-encoded, backslash-escaped,
+ *   URL-encoded or stripped). A forward HTML/JS tokenizer -- which models
+ *   rawtext/RCDATA elements (script, style, textarea, title, iframe, xmp, ...),
+ *   quoted/unquoted attributes, URL attributes, event handlers and JS
+ *   string/template literals -- fixes the exact reflection context.
  *
- *   2. Determine the reflection CONTEXT with a forward HTML/JS tokenizer:
- *      HTML text, HTML comment, tag/attribute-name position, single/double/
- *      unquoted attribute value, URL attribute, event handler, <script> data,
- *      JS single/double/template string, and <style>/CSS -- plus JSON string and
- *      JSONP for API responses.
+ *   STAGE 2 -- Confirm. The context-specific proof-of-concept derived from
+ *   stage 1 is injected for real and the response is checked for the payload
+ *   reflected verbatim and unescaped. Only if this live confirmation succeeds
+ *   is an issue raised, which drives the false-positive rate to near zero
+ *   (keyword/tag WAFs that pass single characters but block whole payloads are
+ *   caught here, as is any encoding the single-character probe could not see).
  *
- *   3. Decide EXPLOITABILITY from the context together with which break-out
- *      characters actually survived, exactly as a human would ("is a { reflected
- *      literally inside this attribute value?"). Only genuine break-outs are
- *      reported, which is what keeps Reflector's false-positive rate low.
- *
- * The result is handed to {@link EnhancedIssueReporter} so findings render
- * identically to the rest of the extension.
+ * Reported issues contain only dynamic, real-time evidence gathered from these
+ * two live requests -- the reflection context, the per-character break-out
+ * table, the confirmed PoC and the live reflected snippet. No static
+ * remediation or background text is emitted.
  */
 public class ContextualReflectionEngine {
 
     private final IExtensionHelpers helpers;
     private final IBurpExtenderCallbacks callbacks;
     private final Settings settings;
-    private final EnhancedIssueReporter reporter;
     private final java.security.SecureRandom rng = new java.security.SecureRandom();
 
-    /**
-     * Break-out characters probed, in a fixed order. The transformation applied
-     * to each is read back by splitting the reflected block on the canary.
-     */
+    /** Break-out characters probed, in a fixed order. */
     private static final char[] SPECIALS = {
         '<', '>', '"', '\'', '`', '(', ')', '{', '}', ';', '/', '\\', '=', ':', ' ', '$'
     };
 
-    /** Reflection contexts the engine distinguishes. */
+    /** HTML elements whose content is rawtext/RCDATA: a reflection inside one
+     *  can only break out via the matching end tag, never by opening a new tag. */
+    private static final Set<String> RAWTEXT_ELEMENTS = new HashSet<>(Arrays.asList(
+        "textarea", "title", "iframe", "xmp", "noembed", "noframes", "noscript"
+    ));
+
     enum Ctx {
         HTML_TEXT, HTML_COMMENT, TAG_NAME_OR_ATTR, ATTR_DOUBLE, ATTR_SINGLE, ATTR_UNQUOTED,
         ATTR_URL, EVENT_HANDLER, SCRIPT_DATA, SCRIPT_STRING_SINGLE, SCRIPT_STRING_DOUBLE,
-        SCRIPT_TEMPLATE, STYLE, JSON_STRING, JSONP, UNKNOWN
+        SCRIPT_TEMPLATE, STYLE, RAWTEXT, PLAINTEXT, JSON_STRING, JSONP, UNKNOWN
     }
 
     public ContextualReflectionEngine(IExtensionHelpers helpers, IBurpExtenderCallbacks callbacks, Settings settings) {
         this.helpers = helpers;
         this.callbacks = callbacks;
         this.settings = settings;
-        this.reporter = new EnhancedIssueReporter(helpers, callbacks, settings);
     }
 
     /**
-     * Run the contextual probe against a single insertion point and return any
-     * confirmed/high-confidence reflected-XSS issue found.
+     * Run the contextual probe + live confirmation against a single insertion
+     * point and return a confirmed reflected-XSS issue, or nothing.
      */
     public List<IScanIssue> scan(IHttpRequestResponse baseRequestResponse, IScannerInsertionPoint insertionPoint) {
         List<IScanIssue> issues = new ArrayList<>();
@@ -81,11 +84,12 @@ public class ContextualReflectionEngine {
             return issues;
         }
         try {
+            IHttpService service = baseRequestResponse.getHttpService();
             String tag = randomCanary();
             String probe = buildProbe(tag);
 
             byte[] probeRequest = insertionPoint.buildRequest(helpers.stringToBytes(probe));
-            IHttpRequestResponse probeRR = callbacks.makeHttpRequest(baseRequestResponse.getHttpService(), probeRequest);
+            IHttpRequestResponse probeRR = callbacks.makeHttpRequest(service, probeRequest);
             if (probeRR == null || probeRR.getResponse() == null) {
                 return issues;
             }
@@ -97,30 +101,38 @@ public class ContextualReflectionEngine {
 
             MimeInfo mime = classifyMime(respInfo);
 
-            // All reflection sites of the canary.
-            List<Integer> sites = indicesOf(body, tag);
+            List<Integer> sites = reflectionSites(body, tag);
             if (sites.isEmpty()) {
                 return issues; // input not reflected at all
             }
 
             Finding best = null;
             for (int siteStart : sites) {
-                Finding f = evaluateSite(body, siteStart, tag, probe, mime, insertionPoint, respInfo);
+                Finding f = evaluateSite(body, siteStart, tag, mime);
                 if (f != null && (best == null || f.confidence > best.confidence)) {
                     best = f;
                 }
-                // The canary appears n+1 times per reflection; once we have a
-                // confident finding there is no value in re-scanning every copy.
-                if (best != null && best.confidence >= 95.0) {
+                if (best != null && best.confidence >= 100.0) {
                     break;
                 }
             }
+            if (best == null) {
+                return issues;
+            }
 
-            if (best != null) {
-                IScanIssue issue = buildIssue(probeRR, insertionPoint, tag, probeRequest, respBytes, best);
-                if (issue != null) {
-                    issues.add(issue);
+            // STAGE 2 -- live confirmation. No issue without it.
+            Confirmation conf = confirm(insertionPoint, service, best.poc);
+            if (conf == null || !conf.confirmed) {
+                if (settings != null && settings.getVerboseLogging()) {
+                    callbacks.printOutput("[ContextualReflectionEngine] Candidate not confirmed live ("
+                            + best.contextLabel + ", " + insertionPoint.getInsertionPointName() + ") -- suppressed to avoid false positive.");
                 }
+                return issues;
+            }
+
+            IScanIssue issue = buildDynamicIssue(baseRequestResponse, insertionPoint, best, conf);
+            if (issue != null) {
+                issues.add(issue);
             }
         } catch (Exception e) {
             if (settings != null && settings.getVerboseLogging()) {
@@ -135,11 +147,9 @@ public class ContextualReflectionEngine {
     // ------------------------------------------------------------------
 
     private String randomCanary() {
-        // Pure lowercase letters: survives HTML/JS/URL/JSON encoders unchanged
-        // and is extremely unlikely to collide with page content.
         StringBuilder sb = new StringBuilder("zq");
         String alphabet = "abcdefghijklmnopqrstuvwxyz";
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < 7; i++) {
             sb.append(alphabet.charAt(rng.nextInt(alphabet.length())));
         }
         return sb.toString();
@@ -154,17 +164,11 @@ public class ContextualReflectionEngine {
         return sb.toString();
     }
 
-    /**
-     * Read back, for each probed special character, how it was transformed at a
-     * particular reflection site. Returns a map keyed by the character.
-     */
     private Map<Character, CharFate> decodeSurvival(String body, int siteStart, String tag) {
         Map<Character, CharFate> fate = new HashMap<>();
-        // Bound the block so an unrelated later canary copy cannot bleed in.
         int blockEnd = Math.min(body.length(), siteStart + tag.length() * (SPECIALS.length + 2) + 64 * SPECIALS.length);
         String block = body.substring(siteStart, blockEnd);
         String[] parts = block.split(java.util.regex.Pattern.quote(tag), -1);
-        // parts[0] == "" ; parts[i+1] == transform of SPECIALS[i]
         for (int i = 0; i < SPECIALS.length; i++) {
             char c = SPECIALS[i];
             String t = (i + 1 < parts.length) ? parts[i + 1] : "";
@@ -182,8 +186,6 @@ public class ContextualReflectionEngine {
         int idx = transform.indexOf(c);
         if (idx >= 0) {
             f.present = true;
-            // Unescaped == present and not immediately preceded by a backslash
-            // (the distinction that matters inside JS/JSON string contexts).
             f.unescaped = (idx == 0) || transform.charAt(idx - 1) != '\\';
             if (idx > 0 && transform.charAt(idx - 1) == '\\') {
                 f.backslashEscaped = true;
@@ -207,28 +209,23 @@ public class ContextualReflectionEngine {
 
     private static final class CtxResult {
         Ctx ctx = Ctx.UNKNOWN;
-        String attrName = "";     // lowercased attribute name when in an attribute
-        boolean valueAtStart;     // reflection begins at the attribute value start
+        String attrName = "";
+        String rawTag = "";       // the rawtext/RCDATA element name, when applicable
+        boolean valueAtStart;
     }
 
-    /**
-     * Walk the response from the start to {@code pos} and report the parser
-     * state at that offset. Deliberately pragmatic but faithful to the real
-     * HTML tokenizer transitions that matter for XSS (rawtext for
-     * script/style, {@code </script>} terminating a JS string, quoted vs
-     * unquoted attribute values, event-handler and URL attributes).
-     */
     private CtxResult detectContext(String body, int pos) {
         CtxResult r = new CtxResult();
-        final int DATA = 0, TAG = 1, COMMENT = 2, RAW_SCRIPT = 3, RAW_STYLE = 4;
+        final int DATA = 0, TAG = 1, COMMENT = 2, RAW_SCRIPT = 3, RAW_STYLE = 4, RAW_TEXT = 5, PLAIN = 6;
         int mode = DATA;
 
         String tagName = "";
         String attrName = "";
-        boolean inAttrValue = false;   // unquoted value in progress
-        char attrQuote = 0;            // 0 = none, else '"' or '\''
-        int valueStartPos = -1;        // where the current attr value began
-        char jsQuote = 0;              // string quote inside <script>
+        String rawTag = "";
+        boolean inAttrValue = false;
+        char attrQuote = 0;
+        int valueStartPos = -1;
+        char jsQuote = 0;
         boolean jsLineComment = false, jsBlockComment = false;
 
         int i = 0;
@@ -283,12 +280,14 @@ public class ContextualReflectionEngine {
                         i++;
                         break;
                     }
-                    if (inAttrValue) { // unquoted value
+                    if (inAttrValue) {
                         if (c == '>' || isWhite(c)) {
                             inAttrValue = false;
                             attrName = "";
                             if (c == '>') {
-                                mode = enterBodyMode(tagName);
+                                int[] res = enterBody(tagName);
+                                mode = res[0];
+                                rawTag = (res[0] == RAW_TEXT) ? tagName : "";
                                 tagName = "";
                             }
                             i++;
@@ -298,7 +297,9 @@ public class ContextualReflectionEngine {
                         break;
                     }
                     if (c == '>') {
-                        mode = enterBodyMode(tagName);
+                        int[] res = enterBody(tagName);
+                        mode = res[0];
+                        rawTag = (res[0] == RAW_TEXT) ? tagName : "";
                         tagName = "";
                         i++;
                         break;
@@ -328,7 +329,6 @@ public class ContextualReflectionEngine {
                         i++;
                         break;
                     }
-                    // attribute name
                     int s = i;
                     while (i < pos && i < n && !isWhite(body.charAt(i)) && body.charAt(i) != '='
                             && body.charAt(i) != '>' && body.charAt(i) != '"' && body.charAt(i) != '\'') {
@@ -343,7 +343,7 @@ public class ContextualReflectionEngine {
                         jsQuote = 0;
                         jsLineComment = false;
                         jsBlockComment = false;
-                        i += 2; // step past "</"; DATA will re-read the tag name
+                        i += 2;
                         continue;
                     }
                     if (jsLineComment) {
@@ -400,18 +400,35 @@ public class ContextualReflectionEngine {
                     i++;
                     break;
                 }
+                case RAW_TEXT: {
+                    if ((c == '<') && regionIgnoreCase(body, i, "</" + rawTag)) {
+                        mode = DATA;
+                        rawTag = "";
+                        i += 2;
+                        continue;
+                    }
+                    i++;
+                    break;
+                }
+                case PLAIN:
                 default:
                     i++;
             }
         }
 
-        // Translate the terminal parser state into a context.
         switch (mode) {
             case COMMENT:
                 r.ctx = Ctx.HTML_COMMENT;
                 return r;
             case RAW_STYLE:
                 r.ctx = Ctx.STYLE;
+                return r;
+            case RAW_TEXT:
+                r.ctx = Ctx.RAWTEXT;
+                r.rawTag = rawTag;
+                return r;
+            case PLAIN:
+                r.ctx = Ctx.PLAINTEXT;
                 return r;
             case RAW_SCRIPT:
                 if (jsQuote == '`') {
@@ -444,8 +461,6 @@ public class ContextualReflectionEngine {
                         r.ctx = Ctx.ATTR_UNQUOTED;
                     }
                 } else {
-                    // Between/at attribute names: a new attribute (and event
-                    // handler) can be introduced -- a very strong position.
                     r.ctx = Ctx.TAG_NAME_OR_ATTR;
                 }
                 return r;
@@ -455,42 +470,50 @@ public class ContextualReflectionEngine {
         }
     }
 
-    private int enterBodyMode(String tagName) {
+    /** Returns the body-mode to enter after a tag's ">" ( {mode} ). */
+    private int[] enterBody(String tagName) {
         if ("script".equals(tagName)) {
-            return 3; // RAW_SCRIPT
+            return new int[]{3};
         }
         if ("style".equals(tagName)) {
-            return 4; // RAW_STYLE
+            return new int[]{4};
         }
-        return 0; // DATA
+        if ("plaintext".equals(tagName)) {
+            return new int[]{6};
+        }
+        if (RAWTEXT_ELEMENTS.contains(tagName)) {
+            return new int[]{5};
+        }
+        return new int[]{0};
     }
 
     // ------------------------------------------------------------------
-    // Exploitability evaluation
+    // Exploitability evaluation (confirmed-only; zero tolerance for guesses)
     // ------------------------------------------------------------------
 
-    private Finding evaluateSite(String body, int siteStart, String tag, String probe,
-                                 MimeInfo mime, IScannerInsertionPoint ip, IResponseInfo respInfo) {
+    private Finding evaluateSite(String body, int siteStart, String tag, MimeInfo mime) {
         Map<Character, CharFate> fate = decodeSurvival(body, siteStart, tag);
 
-        // JSON / JSONP responses take the structured-data path.
         if (mime.isJson || mime.isJavaScript) {
             Finding jf = evaluateJson(body, siteStart, tag, fate, mime);
             if (jf != null) {
+                jf.fate = fate;
                 return jf;
             }
-            // JSON that is not html-renderable and not JSONP is not directly
-            // exploitable; fall through only if it is html-renderable.
             if (!mime.htmlRenderable) {
-                return null;
+                return null; // structured data not reachable as markup
             }
         }
 
         CtxResult c = detectContext(body, siteStart);
-        return evaluateHtml(c, fate, mime);
+        Finding f = evaluateHtml(c, fate);
+        if (f != null) {
+            f.fate = fate;
+        }
+        return f;
     }
 
-    private Finding evaluateHtml(CtxResult c, Map<Character, CharFate> fate, MimeInfo mime) {
+    private Finding evaluateHtml(CtxResult c, Map<Character, CharFate> fate) {
         boolean lt = present(fate, '<');
         boolean gt = present(fate, '>');
         boolean sp = present(fate, ' ');
@@ -499,85 +522,64 @@ public class ContextualReflectionEngine {
         switch (c.ctx) {
             case HTML_TEXT: {
                 if (lt && gt) {
-                    return confirmed(c.ctx, "HTML text", 100.0,
-                            "<img src=x onerror=alert(1)>",
-                            "The characters < and > are reflected unencoded in HTML text, allowing arbitrary tag injection.");
+                    return hi(c.ctx, "HTML text", 100.0, "<img src=x onerror=alert(1)>",
+                            "< and > are reflected unencoded in HTML text, allowing arbitrary tag injection.");
                 }
                 if (lt) {
-                    return confirmed(c.ctx, "HTML text", 90.0,
-                            "<svg onload=alert(1)>",
-                            "< is reflected unencoded in HTML text; a tag can be injected (browser auto-completes the markup).");
+                    return hi(c.ctx, "HTML text", 92.0, "<svg onload=alert(1)>",
+                            "< is reflected unencoded in HTML text; a tag can be injected (the browser auto-completes the markup).");
                 }
                 return null;
             }
             case HTML_COMMENT: {
                 if (gt && lt) {
-                    return confirmed(c.ctx, "HTML comment", 85.0,
-                            "--><img src=x onerror=alert(1)>",
-                            "The comment can be closed with --> and a new tag injected (< and > survive).");
+                    return med(c.ctx, "HTML comment", 88.0, "--><img src=x onerror=alert(1)>",
+                            "The comment can be closed with --> (< and > survive) and a new tag injected.");
                 }
                 return null;
             }
             case TAG_NAME_OR_ATTR: {
                 if (sp) {
-                    return confirmed(c.ctx, "Tag / attribute-name position", 98.0,
-                            " autofocus onfocus=alert(1) ",
-                            "Reflection sits where a new attribute can be added; an event-handler attribute injects JavaScript.");
+                    return hi(c.ctx, "Tag / attribute-name position", 99.0, " autofocus onfocus=alert(1) ",
+                            "The reflection sits where a new attribute can be added; an event-handler attribute injects JavaScript.");
                 }
                 if (gt && lt) {
-                    return confirmed(c.ctx, "Tag / attribute-name position", 95.0,
-                            "><img src=x onerror=alert(1)>",
+                    return hi(c.ctx, "Tag / attribute-name position", 96.0, "><img src=x onerror=alert(1)>",
                             "The tag can be closed with > and a new element injected.");
                 }
                 return null;
             }
             case ATTR_DOUBLE: {
                 boolean q = unescaped(fate, '"');
-                if (q && (lt && gt)) {
-                    return confirmed(c.ctx, "Double-quoted attribute", 100.0,
-                            "\"><img src=x onerror=alert(1)>",
+                if (q && lt && gt) {
+                    return hi(c.ctx, "Double-quoted attribute", 100.0, "\"><img src=x onerror=alert(1)>",
                             "The double quote is reflected unencoded, breaking out of the attribute, and < > allow tag injection.");
                 }
                 if (q && sp) {
-                    return confirmed(c.ctx, "Double-quoted attribute", 95.0,
-                            "\" autofocus onfocus=alert(1) x=\"",
-                            "The double quote breaks out of the attribute value, and a new event-handler attribute can be added.");
-                }
-                if (q) {
-                    return tentative(c.ctx, "Double-quoted attribute", 55.0,
-                            "\"><img src=x onerror=alert(1)>",
-                            "The double quote is reflected unencoded; break-out is possible though < > or whitespace were restricted.");
+                    return hi(c.ctx, "Double-quoted attribute", 97.0, "\" autofocus onfocus=alert(1) x=\"",
+                            "The double quote breaks out of the attribute value and a new event-handler attribute can be added.");
                 }
                 return null;
             }
             case ATTR_SINGLE: {
                 boolean q = unescaped(fate, '\'');
-                if (q && (lt && gt)) {
-                    return confirmed(c.ctx, "Single-quoted attribute", 100.0,
-                            "'><img src=x onerror=alert(1)>",
+                if (q && lt && gt) {
+                    return hi(c.ctx, "Single-quoted attribute", 100.0, "'><img src=x onerror=alert(1)>",
                             "The single quote is reflected unencoded, breaking out of the attribute, and < > allow tag injection.");
                 }
                 if (q && sp) {
-                    return confirmed(c.ctx, "Single-quoted attribute", 95.0,
-                            "' autofocus onfocus=alert(1) x='",
-                            "The single quote breaks out of the attribute value, and a new event-handler attribute can be added.");
-                }
-                if (q) {
-                    return tentative(c.ctx, "Single-quoted attribute", 55.0,
-                            "'><img src=x onerror=alert(1)>",
-                            "The single quote is reflected unencoded; break-out is possible though < > or whitespace were restricted.");
+                    return hi(c.ctx, "Single-quoted attribute", 97.0, "' autofocus onfocus=alert(1) x='",
+                            "The single quote breaks out of the attribute value and a new event-handler attribute can be added.");
                 }
                 return null;
             }
             case ATTR_UNQUOTED: {
                 if (sp) {
-                    return confirmed(c.ctx, "Unquoted attribute", 97.0,
-                            " onmouseover=alert(1) ",
+                    return hi(c.ctx, "Unquoted attribute", 98.0, " onmouseover=alert(1) ",
                             "The value is unquoted and whitespace survives, so an event-handler attribute can be appended directly.");
                 }
                 if (gt && lt) {
-                    return confirmed(c.ctx, "Unquoted attribute", 95.0,
-                            "><img src=x onerror=alert(1)>",
+                    return hi(c.ctx, "Unquoted attribute", 96.0, "><img src=x onerror=alert(1)>",
                             "The unquoted value can be terminated with > and a new element injected.");
                 }
                 return null;
@@ -585,63 +587,52 @@ public class ContextualReflectionEngine {
             case ATTR_URL: {
                 boolean colon = present(fate, ':');
                 if (c.valueAtStart && colon) {
-                    return confirmed(c.ctx, "URL attribute (scheme)", 92.0,
-                            "javascript:alert(1)",
+                    return hi(c.ctx, "URL attribute (scheme)", 94.0, "javascript:alert(1)",
                             "The value controls the start of a URL-bearing attribute; the javascript: scheme executes on activation.");
                 }
                 boolean q = unescaped(fate, '"') || unescaped(fate, '\'');
                 if (q && lt && gt) {
-                    return confirmed(c.ctx, "URL attribute", 90.0,
-                            "\"><img src=x onerror=alert(1)>",
+                    return hi(c.ctx, "URL attribute", 92.0, "\"><img src=x onerror=alert(1)>",
                             "The quote delimiting the URL attribute is reflected unencoded, allowing break-out and tag injection.");
                 }
                 return null;
             }
             case EVENT_HANDLER: {
-                // Already a JavaScript execution context.
                 boolean q = unescaped(fate, '"') || unescaped(fate, '\'');
                 if (q) {
-                    return confirmed(c.ctx, "Event handler (JS)", 98.0,
-                            "';alert(1);//",
+                    return hi(c.ctx, "Event handler (JavaScript)", 99.0, "';alert(1);//",
                             "The reflection is inside an on* event-handler value and the surrounding quote is reflected unencoded, so JavaScript can be injected.");
                 }
-                return confirmed(c.ctx, "Event handler (JS)", 90.0,
-                        "-alert(1)-",
-                        "The reflection is inside an on* event-handler value (JavaScript execution context).");
+                return hi(c.ctx, "Event handler (JavaScript)", 93.0, "-alert(1)-",
+                        "The reflection is inside an on* event-handler value (a JavaScript execution context).");
             }
             case SCRIPT_DATA: {
                 if (lt && slash) {
-                    return confirmed(c.ctx, "Inline <script> block", 100.0,
-                            "</script><img src=x onerror=alert(1)>",
+                    return hi(c.ctx, "Inline <script> block", 100.0, "</script><img src=x onerror=alert(1)>",
                             "The reflection is in an inline script block; </script> closes it and a new element is injected.");
                 }
-                return confirmed(c.ctx, "Inline <script> block", 97.0,
-                        ";alert(1);//",
-                        "The reflection is directly inside an inline <script> block (JavaScript execution context).");
+                return hi(c.ctx, "Inline <script> block", 98.0, ";alert(1);//",
+                        "The reflection is directly inside an inline <script> block (a JavaScript execution context).");
             }
             case SCRIPT_STRING_DOUBLE: {
                 if (unescaped(fate, '"')) {
-                    return confirmed(c.ctx, "JavaScript string (double-quoted)", 98.0,
-                            "\";alert(1);//",
+                    return hi(c.ctx, "JavaScript string (double-quoted)", 99.0, "\";alert(1);//",
                             "The double quote is reflected unescaped inside a JavaScript string literal, allowing the string to be broken and code injected.");
                 }
                 if (lt && slash) {
-                    return confirmed(c.ctx, "JavaScript string (double-quoted)", 90.0,
-                            "</script><img src=x onerror=alert(1)>",
-                            "The JS string cannot be broken directly, but </script> terminates the script element (< and / survive) allowing tag injection.");
+                    return hi(c.ctx, "JavaScript string (double-quoted)", 92.0, "</script><img src=x onerror=alert(1)>",
+                            "The string cannot be broken directly, but </script> terminates the script element (< and / survive), allowing tag injection.");
                 }
                 return null;
             }
             case SCRIPT_STRING_SINGLE: {
                 if (unescaped(fate, '\'')) {
-                    return confirmed(c.ctx, "JavaScript string (single-quoted)", 98.0,
-                            "';alert(1);//",
+                    return hi(c.ctx, "JavaScript string (single-quoted)", 99.0, "';alert(1);//",
                             "The single quote is reflected unescaped inside a JavaScript string literal, allowing the string to be broken and code injected.");
                 }
                 if (lt && slash) {
-                    return confirmed(c.ctx, "JavaScript string (single-quoted)", 90.0,
-                            "</script><img src=x onerror=alert(1)>",
-                            "The JS string cannot be broken directly, but </script> terminates the script element (< and / survive) allowing tag injection.");
+                    return hi(c.ctx, "JavaScript string (single-quoted)", 92.0, "</script><img src=x onerror=alert(1)>",
+                            "The string cannot be broken directly, but </script> terminates the script element (< and / survive), allowing tag injection.");
                 }
                 return null;
             }
@@ -650,76 +641,60 @@ public class ContextualReflectionEngine {
                 boolean ob = present(fate, '{');
                 boolean cb = present(fate, '}');
                 if (dollar && ob && cb) {
-                    return confirmed(c.ctx, "JavaScript template literal", 98.0,
-                            "${alert(1)}",
+                    return hi(c.ctx, "JavaScript template literal", 99.0, "${alert(1)}",
                             "Inside a template literal, ${...} is evaluated as JavaScript and the required characters survive.");
                 }
                 if (unescaped(fate, '`')) {
-                    return confirmed(c.ctx, "JavaScript template literal", 95.0,
-                            "`;alert(1);//",
+                    return hi(c.ctx, "JavaScript template literal", 96.0, "`;alert(1);//",
                             "The backtick is reflected unescaped, breaking out of the template literal.");
                 }
                 return null;
             }
             case STYLE: {
                 if (lt && slash) {
-                    return confirmed(c.ctx, "Inline <style> block", 85.0,
-                            "</style><img src=x onerror=alert(1)>",
-                            "The reflection is inside a style block; </style> closes it (< and / survive) allowing tag injection.");
+                    return med(c.ctx, "Inline <style> block", 85.0, "</style><img src=x onerror=alert(1)>",
+                            "The reflection is inside a style block; </style> closes it (< and / survive), allowing tag injection.");
                 }
                 return null;
             }
+            case RAWTEXT: {
+                // textarea/title/iframe/xmp/... : only the matching end tag breaks out.
+                if (lt && slash && gt) {
+                    String close = "</" + (c.rawTag.isEmpty() ? "textarea" : c.rawTag) + ">";
+                    return hi(c.ctx, "Rawtext element <" + (c.rawTag.isEmpty() ? "textarea" : c.rawTag) + ">", 90.0,
+                            close + "<img src=x onerror=alert(1)>",
+                            "The reflection is inside a rawtext/RCDATA element; the matching end tag " + close
+                            + " closes it (< / > survive), allowing tag injection.");
+                }
+                return null; // cannot break out -> not a false positive
+            }
+            case PLAINTEXT:
             default:
-                return null;
+                return null; // <plaintext> cannot be escaped; never report
         }
     }
 
-    /**
-     * JSON / JSONP evaluation -- the capability Reflector lacks. Decides whether
-     * a reflection inside a JSON response is actually reachable as script.
-     */
     private Finding evaluateJson(String body, int siteStart, String tag,
                                  Map<Character, CharFate> fate, MimeInfo mime) {
-        // 1) JSONP: the reflected value is used as a callback function name and
-        //    is immediately followed by "(" -- direct JavaScript execution.
         int blockEnd = Math.min(body.length(), siteStart + tag.length() * (SPECIALS.length + 2) + 64 * SPECIALS.length);
         String block = body.substring(siteStart, blockEnd);
         String[] parts = block.split(java.util.regex.Pattern.quote(tag), -1);
         String after = parts.length > 0 ? parts[parts.length - 1] : "";
         boolean nearStart = siteStart <= firstNonWhitespace(body) + 2;
+
         if ((mime.isJavaScript || mime.isJson) && nearStart && after.trim().startsWith("(")) {
-            Finding f = confirmed(Ctx.JSONP, "JSONP callback", 95.0,
-                    "alert(1)",
-                    "The response is JSONP: the reflected parameter is used as the callback function name and executed directly. "
-                    + "Set the callback parameter to arbitrary JavaScript (or a call such as alert(1)).");
+            Finding f = hi(Ctx.JSONP, "JSONP callback", 96.0, "alert(1)",
+                    "The response is JSONP: the reflected parameter is used as the callback function name and executed directly as JavaScript.");
             f.isJson = true;
             return f;
         }
 
         boolean lt = present(fate, '<');
         boolean gt = present(fate, '>');
-
-        // 2) JSON served so a browser will render it as HTML (wrong/again
-        //    sniffable Content-Type) with < > surviving -> real reflected XSS.
         if (mime.htmlRenderable && lt && gt) {
-            Finding f = confirmed(Ctx.JSON_STRING, "JSON rendered as HTML", 90.0,
-                    "<img src=x onerror=alert(1)>",
+            Finding f = hi(Ctx.JSON_STRING, "JSON rendered as HTML", 92.0, "<img src=x onerror=alert(1)>",
                     "The JSON body is served with a Content-Type a browser treats as HTML (" + mime.describe()
-                    + ") and < > are reflected unencoded, so injected markup executes. Serve application/json with X-Content-Type-Options: nosniff.");
-            f.isJson = true;
-            return f;
-        }
-
-        // 3) Strict application/json. In modern browsers this is not directly
-        //    renderable; report only when the JSON string can be broken AND
-        //    sniffing is not blocked, as a lower-confidence note.
-        boolean quoteBreak = unescaped(fate, '"');
-        if (mime.isJson && !mime.nosniff && quoteBreak && lt) {
-            Finding f = tentative(Ctx.JSON_STRING, "JSON string break-out (sniffing risk)", 50.0,
-                    "\"></script><img src=x onerror=alert(1)>",
-                    "The JSON string delimiter (\") is reflected unescaped and < survives, and the response lacks "
-                    + "X-Content-Type-Options: nosniff. Legacy/content-sniffing clients, or any consumer that injects this value "
-                    + "into the DOM, may execute it. Escape output and send nosniff.");
+                    + ") and < > are reflected unencoded, so injected markup executes.");
             f.isJson = true;
             return f;
         }
@@ -727,51 +702,183 @@ public class ContextualReflectionEngine {
     }
 
     // ------------------------------------------------------------------
-    // Issue construction
+    // Stage 2: live confirmation of the proof-of-concept
     // ------------------------------------------------------------------
 
-    private IScanIssue buildIssue(IHttpRequestResponse probeRR, IScannerInsertionPoint ip, String tag,
-                                  byte[] probeRequest, byte[] probeResponse, Finding f) {
-        Map<String, Object> vd = new HashMap<>();
-        vd.put("paramName", ip.getInsertionPointName());
-        vd.put("payload", f.poc);
-        vd.put("INJECTED_PAYLOAD", f.poc);
-        vd.put("REFLECTION_CONTEXT", f.contextLabel);
-        vd.put("CONFIDENCE_SCORE", f.confidence);
-        vd.put("CONFIRMED_XSS", f.confirmed);
-        vd.put("IS_JSON_RESPONSE", f.isJson);
-        vd.put("CONTEXT_EVIDENCE", f.reason);
-        vd.put("TEST_REQUEST", probeRequest);
-        vd.put("TEST_RESPONSE", probeResponse);
-        List<String> highlight = new ArrayList<>();
-        highlight.add(tag);
-        vd.put("HIGHLIGHT_TERMS", highlight);
-        return reporter.createXSSIssue(probeRR, vd);
+    private Confirmation confirm(IScannerInsertionPoint ip, IHttpService service, String poc) {
+        try {
+            String lm = randomCanary();
+            String rm = randomCanary();
+            String value = lm + poc + rm;
+            byte[] request = ip.buildRequest(helpers.stringToBytes(value));
+            IHttpRequestResponse rr = callbacks.makeHttpRequest(service, request);
+            if (rr == null || rr.getResponse() == null) {
+                return null;
+            }
+            byte[] respBytes = rr.getResponse();
+            IResponseInfo info = helpers.analyzeResponse(respBytes);
+            int off = info.getBodyOffset();
+            String bodyStr = new String(Arrays.copyOfRange(respBytes, off, respBytes.length), StandardCharsets.UTF_8);
+
+            int l = bodyStr.indexOf(lm);
+            if (l < 0) {
+                return null; // our value not reflected
+            }
+            int segStart = l + lm.length();
+            int r = bodyStr.indexOf(rm, segStart);
+            String segment = (r > segStart) ? bodyStr.substring(segStart, r) : bodyStr.substring(segStart,
+                    Math.min(bodyStr.length(), segStart + poc.length() + 8));
+
+            Confirmation conf = new Confirmation();
+            conf.requestResponse = rr;
+            conf.injectedValue = value;
+            conf.confirmed = containsUnescaped(segment, poc);
+            if (conf.confirmed) {
+                conf.snippet = buildSnippet(bodyStr, Math.max(0, l - 24), poc.length() + lm.length() + rm.length() + 48);
+            }
+            return conf;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * True if {@code poc} appears in {@code segment} unencoded, and -- when the
+     * payload leads with a string delimiter -- not neutralised by a backslash.
+     */
+    private boolean containsUnescaped(String segment, String poc) {
+        if (segment == null || poc.isEmpty()) {
+            return false;
+        }
+        boolean quoteLed = poc.charAt(0) == '"' || poc.charAt(0) == '\'' || poc.charAt(0) == '`';
+        int from = 0;
+        while (true) {
+            int idx = segment.indexOf(poc, from);
+            if (idx < 0) {
+                return false;
+            }
+            if (!quoteLed || idx == 0 || segment.charAt(idx - 1) != '\\') {
+                return true;
+            }
+            from = idx + 1;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Dynamic, remediation-free issue construction
+    // ------------------------------------------------------------------
+
+    private IScanIssue buildDynamicIssue(IHttpRequestResponse baseRR, IScannerInsertionPoint ip,
+                                         Finding f, Confirmation conf) {
+        try {
+            IHttpRequestResponse evidence = conf.requestResponse;
+            URL url = helpers.analyzeRequest(evidence).getUrl();
+            String param = ip.getInsertionPointName();
+            String insType = insertionTypeName(ip.getInsertionPointType());
+
+            // Markers over the live request value and the reflected payload.
+            List<int[]> reqMarkers = markers(evidence.getRequest(), conf.injectedValue);
+            List<int[]> respMarkers = markers(evidence.getResponse(), f.poc);
+            IHttpRequestResponse marked;
+            try {
+                marked = callbacks.applyMarkers(evidence, reqMarkers, respMarkers);
+            } catch (Exception e) {
+                marked = evidence;
+            }
+
+            String name = "Reflected XSS (" + f.contextLabel + ") - " + param;
+            String detail = renderDetail(f, param, insType);
+
+            return new DynamicScanIssue(
+                    evidence.getHttpService(), url, new IHttpRequestResponse[]{marked},
+                    name, f.severity, "Certain", detail);
+        } catch (Exception e) {
+            if (settings != null && settings.getVerboseLogging()) {
+                callbacks.printError("[ContextualReflectionEngine] issue build failed: " + e.getMessage());
+            }
+            return null;
+        }
+    }
+
+    /** Only live, dynamic evidence -- no remediation or static background. */
+    private String renderDetail(Finding f, String param, String insType) {
+        StringBuilder d = new StringBuilder();
+        d.append("<p><b>Confirmed reflected XSS</b> - detected by live context probe and verified by injecting the proof-of-concept.</p>");
+        d.append("<p><b>Parameter:</b> <code>").append(esc(param)).append("</code> (").append(esc(insType)).append(")</p>");
+        d.append("<p><b>Reflection context:</b> ").append(esc(f.contextLabel)).append("</p>");
+        d.append("<p><b>Why it is exploitable:</b> ").append(esc(f.reason)).append("</p>");
+
+        d.append("<h4>Break-out character test (live)</h4>");
+        d.append("<p>Each character was injected at the reflection point; the response shows how the application handled it:</p>");
+        d.append("<table cellpadding=\"3\" cellspacing=\"0\" border=\"1\">");
+        d.append("<tr><th>Character</th><th>Result at reflection point</th></tr>");
+        if (f.fate != null) {
+            for (char c : SPECIALS) {
+                CharFate cf = f.fate.get(c);
+                if (cf == null) {
+                    continue;
+                }
+                d.append("<tr><td><code>").append(esc(displayChar(c))).append("</code></td><td>")
+                 .append(fateLabel(cf)).append("</td></tr>");
+            }
+        }
+        d.append("</table>");
+
+        d.append("<h4>Proof of concept (confirmed)</h4>");
+        d.append("<p>Set <code>").append(esc(param)).append("</code> to:</p>");
+        d.append("<pre>").append(esc(f.poc)).append("</pre>");
+        d.append("<p>This payload was injected and observed reflected unencoded in the response.</p>");
+
+        if (confSnippet(f) != null) {
+            d.append("<h4>Live reflection</h4>");
+            d.append("<pre>").append(confSnippet(f)).append("</pre>");
+        }
+        return d.toString();
+    }
+
+    private String confSnippet(Finding f) {
+        return f.snippet; // already HTML-escaped
+    }
+
+    private String fateLabel(CharFate cf) {
+        if (cf.present && cf.unescaped && !cf.htmlEncoded) {
+            return "<span style=\"color:#b00020\"><b>Reflected UNENCODED</b></span>";
+        }
+        if (cf.present && cf.backslashEscaped) {
+            return "Backslash-escaped (\\)";
+        }
+        if (cf.htmlEncoded) {
+            return "HTML-entity-encoded";
+        }
+        if (cf.urlEncoded) {
+            return "URL-encoded";
+        }
+        if (cf.present) {
+            return "Reflected (neutralised)";
+        }
+        return "Stripped / blocked";
     }
 
     // ------------------------------------------------------------------
     // Small helpers
     // ------------------------------------------------------------------
 
-    private Finding confirmed(Ctx ctx, String label, double conf, String poc, String reason) {
-        Finding f = new Finding();
-        f.ctx = ctx;
-        f.contextLabel = label;
-        f.confidence = conf;
-        f.confirmed = true;
-        f.poc = poc;
-        f.reason = reason;
-        return f;
+    private Finding hi(Ctx ctx, String label, double conf, String poc, String reason) {
+        return mk(ctx, label, conf, poc, reason, "High");
     }
 
-    private Finding tentative(Ctx ctx, String label, double conf, String poc, String reason) {
+    private Finding med(Ctx ctx, String label, double conf, String poc, String reason) {
+        return mk(ctx, label, conf, poc, reason, "Medium");
+    }
+
+    private Finding mk(Ctx ctx, String label, double conf, String poc, String reason, String severity) {
         Finding f = new Finding();
         f.ctx = ctx;
         f.contextLabel = label;
         f.confidence = conf;
-        f.confirmed = false;
         f.poc = poc;
         f.reason = reason;
+        f.severity = severity;
         return f;
     }
 
@@ -782,7 +889,28 @@ public class ContextualReflectionEngine {
 
     private boolean unescaped(Map<Character, CharFate> fate, char c) {
         CharFate f = fate.get(c);
-        return f != null && f.present && f.unescaped;
+        return f != null && f.present && f.unescaped && !f.htmlEncoded;
+    }
+
+    private List<int[]> markers(byte[] data, String needle) {
+        List<int[]> out = new ArrayList<>();
+        try {
+            byte[] pat = helpers.stringToBytes(needle);
+            int idx = helpers.indexOf(data, pat, true, 0, data.length);
+            if (idx >= 0) {
+                out.add(new int[]{idx, idx + pat.length});
+            }
+        } catch (Exception ignored) {
+            // markers are best-effort
+        }
+        return out;
+    }
+
+    private String buildSnippet(String body, int start, int len) {
+        int s = Math.max(0, start);
+        int e = Math.min(body.length(), s + len);
+        String raw = body.substring(s, e);
+        return esc(raw);
     }
 
     private static boolean isWhite(char c) {
@@ -835,7 +963,9 @@ public class ContextualReflectionEngine {
         return 0;
     }
 
-    private List<Integer> indicesOf(String haystack, String needle) {
+    /** All distinct reflection sites of the canary (skipping the interleaved
+     *  copies that belong to one probe block). */
+    private List<Integer> reflectionSites(String haystack, String needle) {
         List<Integer> out = new ArrayList<>();
         int from = 0;
         while (true) {
@@ -844,10 +974,7 @@ public class ContextualReflectionEngine {
                 break;
             }
             out.add(idx);
-            // Skip the whole probe block so we land on the next *reflection*,
-            // not the interleaved canary copies within one probe.
             from = idx + needle.length();
-            // Advance past consecutive canary copies belonging to the same probe.
             int guard = 0;
             while (guard < SPECIALS.length + 1) {
                 int next = haystack.indexOf(needle, from);
@@ -885,11 +1012,9 @@ public class ContextualReflectionEngine {
                 || stated.contains("script") || ct.contains("text/js");
         boolean declaredHtml = ct.contains("text/html") || ct.contains("application/xhtml")
                 || ct.isEmpty() || ct.contains("text/plain");
-        // If the declared type is html-ish, or the body sniffs as HTML and
-        // nothing forbids sniffing, a browser may render it as a document.
         m.htmlRenderable = declaredHtml || (inferred.contains("html") && !m.nosniff);
         if (m.isJson && m.nosniff) {
-            m.htmlRenderable = false; // strict json, sniffing blocked
+            m.htmlRenderable = false;
         }
         return m;
     }
@@ -898,17 +1023,47 @@ public class ContextualReflectionEngine {
         return s == null ? "" : s.toLowerCase(Locale.ROOT);
     }
 
+    private static String displayChar(char c) {
+        if (c == ' ') {
+            return "(space)";
+        }
+        return String.valueOf(c);
+    }
+
+    private static String esc(String s) {
+        if (s == null) {
+            return "";
+        }
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\"", "&quot;").replace("'", "&#39;");
+    }
+
+    private static String insertionTypeName(byte type) {
+        switch (type) {
+            case 0x00: return "URL parameter";
+            case 0x01: return "Body parameter";
+            case 0x02: return "Cookie";
+            case 0x03: return "XML value";
+            case 0x05: return "Multipart parameter";
+            case 0x06: return "JSON value";
+            case 0x07: return "Request header";
+            case 0x20: return "URL path folder";
+            case 0x25: return "URL path filename";
+            default: return "Parameter";
+        }
+    }
+
     // ------------------------------------------------------------------
     // Value objects
     // ------------------------------------------------------------------
 
     private static final class CharFate {
-        boolean present;          // literal character appears in the reflection
-        boolean unescaped;        // appears without a preceding backslash
-        boolean backslashEscaped; // appears but backslash-escaped
-        boolean htmlEncoded;      // entity-encoded form present
-        boolean urlEncoded;       // percent-encoded form present
-        boolean stripped;         // nothing reflected for this character
+        boolean present;
+        boolean unescaped;
+        boolean backslashEscaped;
+        boolean htmlEncoded;
+        boolean urlEncoded;
+        boolean stripped;
     }
 
     private static final class MimeInfo {
@@ -928,9 +1083,55 @@ public class ContextualReflectionEngine {
         Ctx ctx;
         String contextLabel;
         double confidence;
-        boolean confirmed;
         boolean isJson;
         String poc;
         String reason;
+        String severity = "High";
+        Map<Character, CharFate> fate;
+        String snippet; // HTML-escaped live reflection, set after confirmation
+    }
+
+    private static final class Confirmation {
+        IHttpRequestResponse requestResponse;
+        String injectedValue;
+        boolean confirmed;
+        String snippet;
+    }
+
+    /**
+     * Self-contained issue carrying only dynamic, real-time evidence. Background
+     * and remediation are intentionally empty.
+     */
+    private static final class DynamicScanIssue implements IScanIssue {
+        private final IHttpService service;
+        private final URL url;
+        private final IHttpRequestResponse[] messages;
+        private final String name;
+        private final String severity;
+        private final String confidence;
+        private final String detail;
+
+        DynamicScanIssue(IHttpService service, URL url, IHttpRequestResponse[] messages,
+                         String name, String severity, String confidence, String detail) {
+            this.service = service;
+            this.url = url;
+            this.messages = messages;
+            this.name = name;
+            this.severity = severity;
+            this.confidence = confidence;
+            this.detail = detail;
+        }
+
+        @Override public URL getUrl() { return url; }
+        @Override public String getIssueName() { return name; }
+        @Override public int getIssueType() { return 0x00200100; } // Reflected XSS
+        @Override public String getSeverity() { return severity; }
+        @Override public String getConfidence() { return confidence; }
+        @Override public String getIssueBackground() { return ""; }
+        @Override public String getRemediationBackground() { return ""; }
+        @Override public String getIssueDetail() { return detail; }
+        @Override public String getRemediationDetail() { return ""; }
+        @Override public IHttpRequestResponse[] getHttpMessages() { return messages; }
+        @Override public IHttpService getHttpService() { return service; }
     }
 }
