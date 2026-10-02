@@ -717,7 +717,7 @@ public class EnhancedClientSideAttackDetector {
                 result.setHasLiveDOMMonitoring(true);
                 result.setLiveDOMMonitoringRisk("HIGH");
                 result.getDetectedVectors().add("LiveDOMMonitoring");
-                callbacks.printOutput("[REALTIME] Live DOM monitoring detected with usage - Real-time DOM changes active");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] Live DOM monitoring detected with usage - Real-time DOM changes active");
             }
         }
         
@@ -736,7 +736,7 @@ public class EnhancedClientSideAttackDetector {
                 result.setHasRealTimeCommunication(true);
                 result.setRealTimeCommunicationRisk("HIGH");
                 result.getDetectedVectors().add("RealTimeCommunication");
-                callbacks.printOutput("[REALTIME] Real-time communication detected with usage - Live data streaming active");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] Real-time communication detected with usage - Live data streaming active");
             }
         }
         
@@ -755,7 +755,7 @@ public class EnhancedClientSideAttackDetector {
                 result.setHasDynamicCodeExecution(true);
                 result.setDynamicCodeExecutionRisk("HIGH");
                 result.getDetectedVectors().add("DynamicCodeExecution");
-                callbacks.printOutput("[REALTIME] Dynamic code execution detected with usage - Runtime module loading active");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] Dynamic code execution detected with usage - Runtime module loading active");
             }
         }
         
@@ -764,7 +764,7 @@ public class EnhancedClientSideAttackDetector {
             result.setHasAdvancedJSFeatures(true);
             result.setAdvancedJSFeaturesRisk("MEDIUM");
             result.getDetectedVectors().add("AdvancedJSFeatures");
-            callbacks.printOutput("[REALTIME] Advanced JavaScript features detected - Meta-programming possible");
+            if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] Advanced JavaScript features detected - Meta-programming possible");
         }
         
         // Asynchronous Patterns Detection
@@ -772,7 +772,7 @@ public class EnhancedClientSideAttackDetector {
             result.setHasAsyncPatterns(true);
             result.setAsyncPatternsRisk("MEDIUM");
             result.getDetectedVectors().add("AsyncPatterns");
-            callbacks.printOutput("[REALTIME] Asynchronous patterns detected - Non-blocking execution possible");
+            if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] Asynchronous patterns detected - Non-blocking execution possible");
         }
         
         // Modern DOM APIs Detection
@@ -780,7 +780,7 @@ public class EnhancedClientSideAttackDetector {
             result.setHasModernDOMAPIs(true);
             result.setModernDOMAPIsRisk("MEDIUM");
             result.getDetectedVectors().add("ModernDOMAPIs");
-            callbacks.printOutput("[REALTIME] Modern DOM APIs detected - Advanced event monitoring possible");
+            if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] Modern DOM APIs detected - Advanced event monitoring possible");
         }
         
         // Web APIs Detection
@@ -788,7 +788,7 @@ public class EnhancedClientSideAttackDetector {
             result.setHasWebAPIs(true);
             result.setWebAPIsRisk("MEDIUM");
             result.getDetectedVectors().add("WebAPIs");
-            callbacks.printOutput("[REALTIME] Web APIs detected - Advanced data handling possible");
+            if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] Web APIs detected - Advanced data handling possible");
         }
         
         // Storage APIs Detection
@@ -796,7 +796,7 @@ public class EnhancedClientSideAttackDetector {
             result.setHasStorageAPIs(true);
             result.setStorageAPIsRisk("MEDIUM");
             result.getDetectedVectors().add("StorageAPIs");
-            callbacks.printOutput("[REALTIME] Storage APIs detected - Persistent data storage possible");
+            if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] Storage APIs detected - Persistent data storage possible");
         }
         
         // Security APIs Detection
@@ -804,7 +804,7 @@ public class EnhancedClientSideAttackDetector {
             result.setHasSecurityAPIs(true);
             result.setSecurityAPIsRisk("LOW");
             result.getDetectedVectors().add("SecurityAPIs");
-            callbacks.printOutput("[REALTIME] Security APIs detected - Enhanced security measures present");
+            if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] Security APIs detected - Enhanced security measures present");
         }
         
         // Calculate real-time risk score
@@ -1040,7 +1040,7 @@ public class EnhancedClientSideAttackDetector {
                     result.setTestResponse(new String(actualResponse, StandardCharsets.UTF_8));
                 }
                 result.setTestPayload(payload);
-                callbacks.printOutput("[CLIENT-SIDE] Using actual request/response for evidence");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[CLIENT-SIDE] Using actual request/response for evidence");
             } catch (Exception e) {
                 callbacks.printError("[CLIENT-SIDE] Error processing actual request/response: " + e.getMessage());
             }

@@ -71,135 +71,14 @@ public class EnhancedIssueReporter {
      */
     public IScanIssue createXSSIssue(IHttpRequestResponse requestResponse,
                                      Map<String, Object> vulnerabilityData) {
-        try {
-            if (requestResponse == null || vulnerabilityData == null) {
-                return null;
-            }
-
-            // Extract fields from vulnerabilityData
-            String paramName = (String) vulnerabilityData.get("paramName");
-            if (paramName == null || paramName.isEmpty()) {
-                paramName = "Unknown Parameter";
-            }
-            String payload = extractRealPayload(vulnerabilityData);
-            if (payload == null || payload.isEmpty()) {
-                callbacks.printOutput("[IssueReporter] Skipping: No payload provided");
-                return null;
-            }
-            String reflectionContext = (String) vulnerabilityData.get("REFLECTION_CONTEXT");
-            double confidenceScore = getDouble(vulnerabilityData, "CONFIDENCE_SCORE", 0.0);
-            boolean confirmedXSS = Boolean.TRUE.equals(vulnerabilityData.get("CONFIRMED_XSS"));
-
-            // Validate: require CONFIRMED_XSS=true OR confidence >= 50
-            if (!confirmedXSS && confidenceScore < 50.0) {
-                callbacks.printOutput("[IssueReporter] Skipping: Not confirmed and confidence too low (" + confidenceScore + "%)");
-                return null;
-            }
-
-            // JSON responses are not directly exploitable -- require explicit confirmation
-            Boolean isJsonResponse = (Boolean) vulnerabilityData.get("IS_JSON_RESPONSE");
-            if (Boolean.TRUE.equals(isJsonResponse) && !confirmedXSS) {
-                callbacks.printOutput("[IssueReporter] Skipping: JSON response without confirmed exploitation");
-                return null;
-            }
-
-            // Validate: require payload to look like actual XSS
-            if (!isActualXSSPayload(payload)) {
-                callbacks.printOutput("[IssueReporter] Skipping: Payload is not an actual XSS payload");
-                return null;
-            }
-
-            // Determine severity based on reflection and context
-            SeverityLevel severity = SeverityLevel.MEDIUM;
-            ConfidenceLevel confidence = ConfidenceLevel.TENTATIVE;
-
-            if (confirmedXSS) {
-                if (reflectionContext != null &&
-                    (reflectionContext.contains("HTML") || reflectionContext.contains("Script") ||
-                     reflectionContext.contains("Attribute") || reflectionContext.contains("Dangerous"))) {
-                    severity = SeverityLevel.HIGH;
-                    confidence = ConfidenceLevel.FIRM;
-                }
-                if (confidenceScore >= 80.0) {
-                    confidence = ConfidenceLevel.CERTAIN;
-                } else if (confidenceScore >= 60.0) {
-                    confidence = ConfidenceLevel.FIRM;
-                }
-            }
-
-            // Build issue name (include parameter so distinct params are distinct
-            // issues and the dedup key can tell instances apart)
-            String issueName = "Cross-site Scripting (Reflected)";
-            if (reflectionContext != null && !reflectionContext.isEmpty()) {
-                issueName += " - " + reflectionContext;
-            }
-            if (paramName != null && !paramName.trim().isEmpty()) {
-                issueName += " - " + paramName;
-            }
-
-            // Build issue detail
-            StringBuilder detail = new StringBuilder();
-            detail.append("<p><b>XSS Vulnerability Detected</b></p>");
-            detail.append("<p><b>Parameter:</b> ").append(escapeHtml(paramName)).append("</p>");
-            detail.append("<p><b>Payload:</b> <code>").append(escapeHtml(truncatePayload(payload, 200))).append("</code></p>");
-            if (reflectionContext != null) {
-                detail.append("<p><b>Context:</b> ").append(escapeHtml(reflectionContext)).append("</p>");
-            }
-            detail.append("<p><b>Status:</b> ").append(confirmedXSS ? "CONFIRMED" : "Detected pattern").append("</p>");
-            detail.append("<p><b>Confidence Score:</b> ").append(String.format("%.1f", confidenceScore)).append("%</p>");
-
-            // Steps to Reproduce - ensure every report is actionable for pentesters
-            detail.append("<h4>Steps to Reproduce</h4>");
-            detail.append("<ol>");
-            detail.append("<li>Send a request to the affected endpoint with the parameter <code>")
-                  .append(escapeHtml(paramName)).append("</code>.</li>");
-            detail.append("<li>Set the parameter value to the payload: <code>")
-                  .append(escapeHtml(truncatePayload(payload, 200))).append("</code></li>");
-            detail.append("<li>Inspect the response and confirm the payload is reflected unencoded")
-                  .append(reflectionContext != null ? " in the " + escapeHtml(reflectionContext) + " context" : "")
-                  .append(".</li>");
-            detail.append("<li>Load the request in a browser and confirm the JavaScript executes ")
-                  .append("(e.g. an <code>alert()</code> dialog appears or a network callback fires).</li>");
-            detail.append("</ol>");
-
-            // Build remediation
-            String remediation = "<p>Implement proper output encoding based on context:</p>" +
-                "<ul><li>HTML context: Use HTML entity encoding</li>" +
-                "<li>JavaScript context: Use JavaScript encoding</li>" +
-                "<li>URL context: Use URL encoding</li>" +
-                "<li>CSS context: Use CSS encoding</li></ul>" +
-                "<p>Consider implementing Content Security Policy (CSP) headers.</p>";
-
-            // Build background
-            String background = "<p>Cross-site scripting (XSS) vulnerabilities occur when user input is " +
-                "included in web pages without proper encoding, allowing attackers to inject malicious scripts.</p>";
-
-            // Get URL
-            URL url = helpers.analyzeRequest(requestResponse).getUrl();
-
-            // CRITICAL: Use createBurpHighlightedMessages() for proper marker creation
-            IHttpRequestResponse[] httpMessages = createBurpHighlightedMessages(requestResponse, vulnerabilityData);
-
-            callbacks.printOutput("[IssueReporter] Creating XSS issue for parameter: " + paramName +
-                " (confidence: " + confidence.getDisplayName() + ", severity: " + severity.getDisplayName() + ")");
-
-            return new EnhancedScanIssue(
-                requestResponse.getHttpService(),
-                url,
-                httpMessages,
-                issueName,
-                detail.toString(),
-                severity,
-                confidence,
-                remediation,
-                background
-            );
-
-        } catch (Exception e) {
-            callbacks.printError("[IssueReporter] Error creating XSS issue: " + e.getMessage());
-            return null;
-        }
+        // DISABLED: this legacy reflected-XSS reporter produced false positives
+        // with weak payloads (e.g. "value"+"alert(1)") and the old verbose
+        // "Unfiltered Characters / Verification Summary" format. Reflected XSS is
+        // now reported exclusively by ContextualReflectionEngine, which confirms a
+        // real break-out with a working alert()/confirm()/prompt() payload.
+        return null;
     }
+
 
     /**
      * Validate if vulnerability is truly exploitable
@@ -770,13 +649,13 @@ public class EnhancedIssueReporter {
         try {
             // FINAL VALIDATION STEP 1: Check if vulnerability is truly exploitable
             if (!isVulnerabilityTrulyExploitable(vulnerabilityData)) {
-                callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Vulnerability not truly exploitable");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Vulnerability not truly exploitable");
                 return null;
             }
             
             String payload = extractRealPayload(vulnerabilityData);
             if (payload == null || payload.trim().isEmpty()) {
-                callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Payload is null or empty");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Payload is null or empty");
                 return null;
             }
             
@@ -785,7 +664,7 @@ public class EnhancedIssueReporter {
             if (confidenceObj instanceof Number) {
                 double confidence = ((Number) confidenceObj).doubleValue();
                 if (confidence <= 0.0) {
-                    callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Confidence score is 0 (false positive)");
+                    if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Confidence score is 0 (false positive)");
                     return null;
                 }
             }
@@ -796,7 +675,7 @@ public class EnhancedIssueReporter {
                 String vulnType = (String) vulnTypeObj;
                 if (vulnType != null && (vulnType.contains("False Positive") || 
                     vulnType.contains("Safely Escaped") || vulnType.contains("Not Exploitable"))) {
-                    callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Vulnerability type indicates false positive: " + vulnType);
+                    if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Vulnerability type indicates false positive: " + vulnType);
                     return null;
                 }
             }
@@ -810,11 +689,11 @@ public class EnhancedIssueReporter {
             // Check if payload is in a non-exploitable context
             if (reflectionContext != null) {
                 if (reflectionContext.contains("Comment") || reflectionContext.contains("COMMENT")) {
-                    callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Payload in HTML comment (not exploitable)");
+                    if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Payload in HTML comment (not exploitable)");
                     return null;
                 }
                 if (reflectionContext.contains("Safely Escaped") || reflectionContext.contains("False Positive")) {
-                    callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Reflection context indicates false positive");
+                    if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Reflection context indicates false positive");
                     return null;
                 }
             }
@@ -825,7 +704,7 @@ public class EnhancedIssueReporter {
                 (scanType.toLowerCase().contains("dom") || scanType.toLowerCase().contains("client-side"));
             
             if (!clientSideIssue && !isActualXSSPayload(payload)) {
-                callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Payload is not an actual XSS payload");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Payload is not an actual XSS payload");
                 return null;
             }
             
@@ -860,7 +739,7 @@ public class EnhancedIssueReporter {
                             // Otherwise require >= 90 for pattern-only detection
                             double threshold = (Boolean.TRUE.equals(confirmed) && testRequestObj != null && testResponseObj != null) ? 80.0 : 90.0;
                             if (riskScore < threshold || confidenceScore < threshold) {
-                                callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Client-side issue - payload NOT reflected and risk/confidence scores too low (risk: " + riskScore + ", confidence: " + confidenceScore + ") - requiring >= " + threshold + " for detection");
+                                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Client-side issue - payload NOT reflected and risk/confidence scores too low (risk: " + riskScore + ", confidence: " + confidenceScore + ") - requiring >= " + threshold + " for detection");
                                 return null;
                             }
                         }
@@ -873,7 +752,7 @@ public class EnhancedIssueReporter {
                     
                     // CRITICAL: Without test data, require VERY HIGH scores AND CONFIRMED_XSS flag
                     if (!Boolean.TRUE.equals(confirmed) || riskScore < 90.0 || confidenceScore < 90.0) {
-                        callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Client-side issue - no test data and insufficient scores (risk: " + riskScore + ", confidence: " + confidenceScore + ", confirmed: " + confirmed + ")");
+                        if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Client-side issue - no test data and insufficient scores (risk: " + riskScore + ", confidence: " + confidenceScore + ", confirmed: " + confirmed + ")");
                         return null;
                     }
                 }
@@ -896,13 +775,13 @@ public class EnhancedIssueReporter {
                 boolean hasVeryHighScore = riskScore >= 90.0 && confScore >= 90.0;
                 
                 if (!hasTestData && !hasVeryHighScore) {
-                    callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: CSP misconfiguration + client-side vectors - no actual exploitable evidence (risk: " + riskScore + ", confidence: " + confScore + ")");
+                    if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: CSP misconfiguration + client-side vectors - no actual exploitable evidence (risk: " + riskScore + ", confidence: " + confScore + ")");
                     return null;
                 }
             }
             
             // FINAL VALIDATION PASSED - Proceed with issue creation
-            callbacks.printOutput("[IssueReporter] FINAL VALIDATION PASSED: All checks confirmed - creating issue");
+            if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION PASSED: All checks confirmed - creating issue");
             
             // Get analysis results
             ModernArchitectureDetector.ArchitectureAnalysis archAnalysis = 
@@ -1083,40 +962,22 @@ public class EnhancedIssueReporter {
         String scanType = (String) vulnerabilityData.get("SCAN_TYPE");
         String vulnType = (String) vulnerabilityData.get("vulnerabilityType");
         
-        // Professional naming format: "Cross-Site Scripting (XSS) - [Type] - [Parameter]"
-        StringBuilder issueName = new StringBuilder("Cross-Site Scripting (XSS)");
-        
-        // Add type suffix
-        if (vulnType != null) {
-            if (vulnType.contains("DOM") || (scanType != null && scanType.contains("DOM"))) {
-                issueName.append(" - DOM-based");
-            } else if (vulnType.contains("Client-Side") || (scanType != null && scanType.contains("Client-Side"))) {
-                issueName.append(" - Client-side");
-            } else if (scanType != null && "Advanced".equals(scanType)) {
-                issueName.append(" - Reflected");
-            } else if (scanType != null && "Basic".equals(scanType)) {
-                issueName.append(" - Reflected");
-            } else {
-                issueName.append(" - Reflected");
-            }
-        } else if (scanType != null) {
-            if (scanType.contains("DOM")) {
-                issueName.append(" - DOM-based");
-            } else if (scanType.contains("Client-Side")) {
-                issueName.append(" - Client-side");
-            } else {
-                issueName.append(" - Reflected");
-            }
+        // Unified, contextual naming: "Cross-Site Scripting (<Class>)".
+        // The class alone goes in the name; the parameter/context live in the
+        // detail (consistent with the contextual engine and the de-dup key).
+        String type = (vulnType != null ? vulnType : "") + " " + (scanType != null ? scanType : "");
+        String cls;
+        if (type.toLowerCase().contains("dom")) {
+            cls = "DOM-based";
+        } else if (type.toLowerCase().contains("client-side")) {
+            cls = "Client-side";
+        } else if (type.toLowerCase().contains("stored")) {
+            cls = "Stored";
         } else {
-            issueName.append(" - Reflected");
+            cls = "Reflected";
         }
-        
-        // Add parameter name
-        if (cleanParamName != null && !cleanParamName.trim().isEmpty()) {
-            issueName.append(" - ").append(cleanParamName);
-        }
-        
-        return issueName.toString();
+        // cleanParamName is intentionally not appended to the name.
+        return "Cross-Site Scripting (" + cls + ")";
     }
     
     /**
@@ -2839,21 +2700,20 @@ public class EnhancedIssueReporter {
         public String getConfidence() { return confidence.getDisplayName(); }
         
         @Override
-        public String getIssueBackground() { return issueBackground; }
-        
+        // Static background/remediation intentionally suppressed: issues carry
+        // only live, dynamic evidence to stay consistent across all detectors.
+        public String getIssueBackground() { return ""; }
+
         @Override
-        public String getRemediationBackground() {
-            // Return empty to avoid duplication - remediation is already in getRemediationDetail()
-            return "";
-        }
-        
+        public String getRemediationBackground() { return ""; }
+
         @Override
-        public String getIssueDetail() { 
+        public String getIssueDetail() {
             return detail;
         }
-        
+
         @Override
-        public String getRemediationDetail() { return remediationDetail; }
+        public String getRemediationDetail() { return ""; }
         
         @Override
         public IHttpRequestResponse[] getHttpMessages() { return httpMessages; }

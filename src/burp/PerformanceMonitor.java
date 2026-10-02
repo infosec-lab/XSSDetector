@@ -501,7 +501,8 @@ public class PerformanceMonitor {
     }
     
     private void logWarning(String message) {
-        callbacks.printOutput("[PerformanceMonitor WARNING] " + message);
+        // Internal performance threshold warnings are not user-facing noise.
+        // (Kept as a no-op so monitoring logic can still call it.)
     }
     
     private void logError(String message, Exception e) {

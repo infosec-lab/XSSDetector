@@ -124,6 +124,16 @@ public interface IBurpExtenderCallbacks {
     void addScanIssue(IScanIssue issue);
 
     /**
+     * Send an HTTP request to Burp's Repeater tool.
+     */
+    void sendToRepeater(String host, int port, boolean useHttps, byte[] request, String tabCaption);
+
+    /**
+     * Register a factory for custom context-menu items.
+     */
+    void registerContextMenuFactory(IContextMenuFactory factory);
+
+    /**
      * Get all scan issues for URLs matching the specified prefix.
      * @param urlPrefix The URL prefix to match (null for all issues).
      * @return Array of matching scan issues.
