@@ -98,7 +98,7 @@ class Settings {
         // Core settings
         scopeOnly = FALSE_CONST;
         aggressiveMode = FALSE_CONST;
-        autoConfirm = FALSE_CONST;
+        autoConfirm = TRUE_CONST;
         checkContext = TRUE_CONST;
         
         // Essential detection
@@ -164,7 +164,7 @@ class Settings {
             if (aggressiveMode == null) aggressiveMode = FALSE_CONST;
 
             autoConfirm = callbacks.loadExtensionSetting("autoConfirm");
-            if (autoConfirm == null) autoConfirm = FALSE_CONST;
+            if (autoConfirm == null) autoConfirm = TRUE_CONST;
             
             checkContext = callbacks.loadExtensionSetting("checkContext");
             if (checkContext == null) checkContext = TRUE_CONST;

@@ -68,10 +68,12 @@ public final class XssFinding {
         this.response = response;
     }
 
-    /** Stable identity so the same reflection is not listed twice (payload- and
-     *  severity-independent: one spot+context+status is a single row). */
+    /** Stable identity so the same reflection is not listed twice. Deliberately
+     *  independent of status, severity and payload, so a later CONFIRMED result
+     *  UPGRADES the earlier REFLECTED row for the same spot instead of adding a
+     *  second row. */
     public String dedupKey() {
-        return status + "|" + context + "|" + parameter + "|" + stripQuery(url);
+        return context + "|" + parameter + "|" + stripQuery(url);
     }
 
     private static String stripQuery(String u) {

@@ -63,7 +63,9 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
     // ---- center: table + viewer ----
 
     private JComponent buildCenter() {
-        table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
+        // Stretch columns to fill the full width (the URL column absorbs slack)
+        // so the table never leaves empty space on the right.
+        table.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
         table.setRowHeight(22);
         table.setFillsViewportHeight(true);
         table.getSelectionModel().setSelectionMode(ListSelectionModel.SINGLE_SELECTION);

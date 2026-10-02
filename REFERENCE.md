@@ -59,18 +59,21 @@ The counter reads `shown / total`, so you always know what the filters are hidin
 
 ## Running it
 
-Two ways to get **Confirmed** reflected XSS:
+Three ways to get **Confirmed** reflected XSS:
 
-- **Active scan** — right-click a request → **Scan** (or use Burp's scanner).
-  Every parameter is probe-and-confirmed; confirmed XSS lands in Burp's **Issues**
-  and in Live Results.
-- **Live confirm while browsing** — turn on *Settings → Live confirm while browsing*.
-  Now, as you browse, reflected parameters are probe-and-confirmed automatically
-  (a couple of test requests each), so reflected XSS shows up as Confirmed without
-  a manual scan. It sends real payloads, so set your scope first.
+- **Browse (realtime, on by default)** — add your target to **Burp's scope**, then
+  browse it. Reflected parameters on in-scope targets are probe-and-confirmed
+  automatically and flip from **Reflected** to **Confirmed** in the Live Results
+  table, and are reported to **Issues**. For safety this only injects into
+  in-scope targets, so set your scope.
+- **Right-click → Active XSS scan (XSSDetector)** — on any request; scans every
+  parameter immediately and reports confirmed XSS. Works in **any Burp edition**,
+  regardless of scope.
+- **Burp active scan** (Pro) — right-click → Scan, or the scanner.
 
-With live-confirm **off**, browsing still lists reflections as **Reflected** (grey)
-in Live Results — those are candidates; scan them to confirm.
+Realtime auto-confirm can be turned off in *Settings → Live confirm while
+browsing*; with it off, browsing still lists reflections as **Reflected** (grey) —
+candidates to scan.
 
 Confirmed findings also appear in Burp's own **Issues** list as
 *Cross-Site Scripting (Reflected)*, with the live break-out table and a ready PoC.
