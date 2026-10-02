@@ -1076,69 +1076,26 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
 
     @Override
     public int consolidateDuplicateIssues(IScanIssue existingIssue, IScanIssue newIssue) {
-        // IMPROVED: Comprehensive duplicate detection
-        // Return -1 to keep existing issue, 0 to keep both, 1 to keep new issue only
+        // Return -1 to keep existing, 0 to keep both, 1 to keep new only.
         try {
-            // Must have same URL (base comparison)
-            if (!existingIssue.getUrl().equals(newIssue.getUrl())) {
-                return 0; // Different URLs - keep both
-            }
+            // Same canonical identity (URL path + XSS class + parameter) => duplicate,
+            // regardless of which engine reported it, its wording, or the payload used.
+            String existingKey = generateIssueKey(existingIssue);
+            String newKey = generateIssueKey(newIssue);
 
-            String existingName = existingIssue.getIssueName();
-            String newName = newIssue.getIssueName();
-
-            // If exact same issue name, it's a duplicate
-            if (existingName != null && newName != null && existingName.equals(newName)) {
-                callbacks.printOutput("[" + PLUGIN_NAME + "] Duplicate filtered: " + existingName);
-                return -1; // Keep existing
-            }
-
-            // Check for same parameter in issue name (e.g., "XSS - Reflected - query" vs "XSS - DOM - query")
-            String existingParam = extractParameterFromIssueName(existingName);
-            String newParam = extractParameterFromIssueName(newName);
-
-            if (existingParam != null && newParam != null && existingParam.equals(newParam)) {
-                // Same parameter - check if same vulnerability type
-                boolean existingIsXSS = existingName != null && existingName.toLowerCase().contains("xss");
-                boolean newIsXSS = newName != null && newName.toLowerCase().contains("xss");
-
-                if (existingIsXSS && newIsXSS) {
-                    // Both are XSS for same parameter - compare severity/confidence
-                    String existingSev = existingIssue.getSeverity();
-                    String newSev = newIssue.getSeverity();
-
-                    // Keep the higher severity one
-                    int existingScore = getSeverityScore(existingSev);
-                    int newScore = getSeverityScore(newSev);
-
-                    if (newScore > existingScore) {
-                        callbacks.printOutput("[" + PLUGIN_NAME + "] Duplicate (higher severity): keeping new issue for " + newParam);
-                        return 1; // Keep new (higher severity)
-                    } else {
-                        callbacks.printOutput("[" + PLUGIN_NAME + "] Duplicate filtered for parameter: " + existingParam);
-                        return -1; // Keep existing
-                    }
+            if (existingKey.equals(newKey)) {
+                int existingScore = getSeverityScore(existingIssue.getSeverity());
+                int newScore = getSeverityScore(newIssue.getSeverity());
+                if (newScore > existingScore) {
+                    callbacks.printOutput("[" + PLUGIN_NAME + "] Duplicate (higher severity kept): " + newKey);
+                    return 1; // keep the higher-severity report
                 }
+                callbacks.printOutput("[" + PLUGIN_NAME + "] Duplicate filtered: " + existingKey);
+                return -1;
             }
-
-            // Also check issue detail for same payload
-            String existingDetail = existingIssue.getIssueDetail();
-            String newDetail = newIssue.getIssueDetail();
-
-            if (existingDetail != null && newDetail != null) {
-                // Extract payload from details and compare
-                String existingPayload = extractPayloadFromDetail(existingDetail);
-                String newPayload = extractPayloadFromDetail(newDetail);
-
-                if (existingPayload != null && newPayload != null && existingPayload.equals(newPayload)) {
-                    callbacks.printOutput("[" + PLUGIN_NAME + "] Duplicate (same payload) filtered");
-                    return -1; // Same payload = duplicate
-                }
-            }
-
-            return 0; // Different issues - keep both
+            return 0; // genuinely different issues
         } catch (Exception e) {
-            return -1; // On error, keep existing
+            return -1; // on error, keep existing
         }
     }
 
@@ -1260,12 +1217,18 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
     }
 
     /**
-     * Generate a unique key for an issue to detect duplicates
+     * Canonical identity of an XSS finding, used for de-duplication across ALL
+     * detection engines: (scheme+host[:port]+path) | vulnerability-class | parameter.
+     *
+     * The issue NAME and the PAYLOAD are deliberately NOT part of the key: one
+     * vulnerable (URL, class, parameter) is a single instance no matter how many
+     * payload variants confirm it, and no matter which engine or wording reported
+     * it. Distinct classes (reflected vs DOM vs postMessage ...) and distinct
+     * parameters still produce distinct keys, so genuine separate issues remain
+     * separate.
      */
     private String generateIssueKey(IScanIssue issue) {
         StringBuilder key = new StringBuilder();
-
-        // URL (without query string for path-based dedup)
         if (issue.getUrl() != null) {
             key.append(issue.getUrl().getProtocol()).append("://");
             key.append(issue.getUrl().getHost());
@@ -1274,25 +1237,58 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             }
             key.append(issue.getUrl().getPath());
         }
+        key.append("|").append(canonicalXssClass(issue.getIssueName()));
 
-        // Issue type/name
-        key.append("|").append(issue.getIssueName() != null ? issue.getIssueName() : "unknown");
-
-        // Extract parameter from issue name (falls back to detail).
-        String param = extractParameterFromIssueName(issue.getIssueName());
+        // Prefer the parameter from the issue detail (reliable), then the name.
+        // Ignore matches that are just the XSS class word (e.g. a trailing
+        // "(Reflected)"), which would otherwise split the key.
+        String param = extractParameterFromDetail(issue.getIssueDetail());
         if (param == null || param.isEmpty()) {
-            param = extractParameterFromDetail(issue.getIssueDetail());
+            param = extractParameterFromIssueName(issue.getIssueName());
         }
-        if (param != null && !param.isEmpty()) {
-            key.append("|").append(param);
+        if (param != null) {
+            String pl = param.trim().toLowerCase();
+            if (!pl.isEmpty() && !isClassWord(pl)) {
+                key.append("|").append(pl);
+            }
         }
-
-        // NOTE: the payload is deliberately NOT part of the key. One vulnerable
-        // (URL, type, parameter) is a single instance, no matter how many payload
-        // variants confirm it - otherwise the same finding is reported once per
-        // payload. Distinct parameters/types still produce distinct keys, so genuine
-        // multiple instances are reported separately.
         return key.toString();
+    }
+
+    private boolean isClassWord(String s) {
+        switch (s) {
+            case "reflected":
+            case "dom":
+            case "stored":
+            case "postmessage":
+            case "template":
+            case "websocket":
+            case "client-side":
+            case "csp":
+            case "xss":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Collapse an issue name to a coarse XSS class so that the same vulnerability
+     * reported by different engines (with different names/payloads) de-duplicates,
+     * while genuinely different vulnerability classes stay distinct.
+     */
+    private String canonicalXssClass(String issueName) {
+        String n = issueName == null ? "" : issueName.toLowerCase();
+        if (n.contains("dom")) return "dom";
+        if (n.contains("stored")) return "stored";
+        if (n.contains("postmessage") || n.contains("post message")) return "postmessage";
+        if (n.contains("template")) return "template";
+        if (n.contains("websocket")) return "websocket";
+        if (n.contains("clobber") || n.contains("prototype pollution") || n.contains("mxss")
+                || n.contains("client-side") || n.contains("client side")) return "client-side";
+        if (n.contains("csp")) return "csp";
+        if (n.contains("reflect")) return "reflected";
+        return "xss";
     }
 
     /**
@@ -1469,7 +1465,12 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                     // Confirmed without a manual active scan. Never on Scanner
                     // traffic (the active scanner already covers that path).
                     if (settings.getAutoConfirm() && toolFlag != IBurpExtenderCallbacks.TOOL_SCANNER) {
-                        contextualEngine.liveConfirm(messageInfo, toolName);
+                        List<IScanIssue> liveIssues = contextualEngine.liveConfirm(messageInfo, toolName);
+                        if (liveIssues != null) {
+                            for (IScanIssue li : liveIssues) {
+                                reportIssueWithDedup(li); // central de-dup, not a direct addScanIssue
+                            }
+                        }
                     }
                 }
             } catch (Exception e) {

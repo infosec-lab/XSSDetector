@@ -175,22 +175,26 @@ public class ContextualReflectionEngine {
      * reflected request parameter it runs the same probe-and-confirm as the active
      * scanner, so genuine reflected XSS is reported as Confirmed just by browsing.
      * Each (host, path, parameter) is probed at most once per session.
+     *
+     * Returns the confirmed issues so the caller can report them through the
+     * central de-duplication gate (never reports directly, to avoid duplicates).
      */
-    public void liveConfirm(IHttpRequestResponse rr, String source) {
+    public List<IScanIssue> liveConfirm(IHttpRequestResponse rr, String source) {
+        List<IScanIssue> found = new ArrayList<>();
         try {
             if (rr == null || rr.getRequest() == null || rr.getResponse() == null) {
-                return;
+                return found;
             }
             IResponseInfo respInfo = helpers.analyzeResponse(rr.getResponse());
             if (respInfo.getStatusCode() >= 400) {
-                return; // don't probe off error-page reflections
+                return found; // don't probe off error-page reflections
             }
             MimeInfo mime = classifyMime(respInfo);
             String ct = mime.contentType;
             boolean textual = ct.isEmpty() || ct.contains("html") || ct.contains("json")
                     || ct.contains("javascript") || ct.contains("xml") || ct.contains("text");
             if (!textual) {
-                return;
+                return found;
             }
             byte[] respBytes = rr.getResponse();
             String body = new String(Arrays.copyOfRange(respBytes, respInfo.getBodyOffset(), respBytes.length),
@@ -244,7 +248,7 @@ public class ContextualReflectionEngine {
                 if (conf != null && conf.confirmed) {
                     IScanIssue issue = buildDynamicIssue(name, insertionTypeName(type), source, pr.best, conf);
                     if (issue != null) {
-                        callbacks.addScanIssue(issue);
+                        found.add(issue); // reported by the caller through central de-dup
                         callbacks.printOutput("[XSSDetector] Live-confirmed reflected XSS: param '" + name
                                 + "' (" + pr.best.contextLabel + ") at " + host + path);
                     }
@@ -256,6 +260,7 @@ public class ContextualReflectionEngine {
                 callbacks.printError("[XSSDetector] liveConfirm: " + e.getMessage());
             }
         }
+        return found;
     }
 
     /**
