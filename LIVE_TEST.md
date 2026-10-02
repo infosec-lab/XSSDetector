@@ -37,6 +37,13 @@ tab. No Burp scope setup needed.
   targets only** and set your Target scope. With it off (default), it
   auto-confirms everything you browse.
 
+**C. Whole site map.** Right-click anywhere in Burp → **Scan entire Target site
+map (XSSDetector)**. It sweeps every unique endpoint in Burp's Target site map,
+tests only responses whose content-type is enabled in Content Type Management,
+and honors the scope setting (scope off = all domains; scope on = in-scope only).
+Capped at 400 endpoints per run; progress and a summary print to the extension
+output and a dialog.
+
 **B. On demand.** Right-click a request anywhere in Burp → **Active XSS scan**.
 It tests every parameter and pops a summary: parameters tested / reflected /
 confirmed, with a per-parameter line (confirmed, or reflected-but-filtered, or

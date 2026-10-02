@@ -883,6 +883,12 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             JMenuItem scan = new JMenuItem("Active XSS scan (XSSDetector)");
             scan.addActionListener(e -> scanningExecutor.submit(() -> runMenuScan(selected)));
             items.add(scan);
+
+            // Sweep the whole Target site map (filtered by Content Type Management
+            // and the scope setting). This is Burp's purpose; the user triggers it.
+            JMenuItem sweep = new JMenuItem("Scan entire Target site map (XSSDetector)");
+            sweep.addActionListener(e -> scanningExecutor.submit(this::runSiteMapScan));
+            items.add(sweep);
         } catch (Exception ex) {
             callbacks.printError("[" + PLUGIN_NAME + "] context menu error: " + ex.getMessage());
         }
@@ -963,6 +969,162 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         } catch (Exception e) {
             callbacks.printError("[" + PLUGIN_NAME + "] Menu scan error: " + e.getMessage());
         }
+    }
+
+    private static final int SITEMAP_MAX_ENDPOINTS = 400;
+
+    /**
+     * Sweep Burp's entire Target site map and run the contextual XSS test on every
+     * unique endpoint whose response content-type matches Content Type Management.
+     * Honors the "Scan in-scope targets only" setting: OFF tests all domains in the
+     * site map, ON restricts to Burp's Target scope. User-triggered (menu).
+     */
+    private void runSiteMapScan() {
+        if (contextualEngine == null) {
+            return;
+        }
+        int endpoints = 0;
+        int paramsTested = 0;
+        int reflected = 0;
+        int confirmed = 0;
+        int skippedType = 0;
+        int skippedScope = 0;
+        try {
+            IHttpRequestResponse[] siteMap = callbacks.getSiteMap(null);
+            if (siteMap == null || siteMap.length == 0) {
+                SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(panel,
+                        "The Target site map is empty. Browse or crawl the target first, "
+                        + "then run this again.", "XSSDetector", JOptionPane.INFORMATION_MESSAGE));
+                return;
+            }
+            boolean scopeOnly = settings != null && settings.getScopeOnly();
+            java.util.List<String> enabledTypes = settings != null ? settings.getEnabledContentTypes() : null;
+
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            callbacks.printOutput("[" + PLUGIN_NAME + "] Site map sweep started: " + siteMap.length
+                    + " entries (scope-only=" + scopeOnly + ").");
+
+            for (IHttpRequestResponse rr : siteMap) {
+                if (endpoints >= SITEMAP_MAX_ENDPOINTS) {
+                    break;
+                }
+                if (rr == null || rr.getRequest() == null) {
+                    continue;
+                }
+                IRequestInfo ri;
+                try {
+                    ri = helpers.analyzeRequest(rr);
+                } catch (Exception ex) {
+                    continue;
+                }
+                java.net.URL url = ri.getUrl();
+                if (url == null) {
+                    continue;
+                }
+                // Scope policy.
+                if (scopeOnly) {
+                    try {
+                        if (!callbacks.isInScope(url)) {
+                            skippedScope++;
+                            continue;
+                        }
+                    } catch (Exception ex) {
+                        skippedScope++;
+                        continue;
+                    }
+                }
+                // Content-type gate (must have a recorded response of an enabled type).
+                String ct = getResponseContentType(rr);
+                if (!contentTypeEnabledForSweep(ct, enabledTypes)) {
+                    skippedType++;
+                    continue;
+                }
+                // One scan per unique endpoint (method + host + path + param-name set).
+                String key = dedupEndpointKey(ri, url);
+                if (!seen.add(key)) {
+                    continue;
+                }
+                endpoints++;
+
+                ContextualReflectionEngine.ScanStats stats = new ContextualReflectionEngine.ScanStats();
+                List<IScanIssue> issues = contextualEngine.scanRequest(rr, "Site map sweep", stats);
+                paramsTested += stats.params;
+                reflected += stats.reflected;
+                if (issues != null) {
+                    for (IScanIssue issue : issues) {
+                        if (reportIssueWithDedup(issue)) {
+                            confirmed++;
+                        }
+                    }
+                }
+                if (endpoints % 10 == 0) {
+                    callbacks.printOutput("[" + PLUGIN_NAME + "] Sweep progress: " + endpoints
+                            + " endpoints, " + reflected + " reflected, " + confirmed + " confirmed.");
+                }
+            }
+
+            final int fe = endpoints, fp = paramsTested, fr = reflected, fc = confirmed,
+                    fst = skippedType, fss = skippedScope;
+            callbacks.printOutput("[" + PLUGIN_NAME + "] Site map sweep complete: " + fe + " endpoints, "
+                    + fp + " parameters, " + fr + " reflected, " + fc + " confirmed "
+                    + "(skipped " + fst + " by content-type, " + fss + " out of scope).");
+            SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(panel,
+                    "Site map sweep complete.\n\n"
+                    + "Endpoints scanned: " + fe + (fe >= SITEMAP_MAX_ENDPOINTS ? " (capped)" : "") + "\n"
+                    + "Parameters tested: " + fp + "\n"
+                    + "Reflected: " + fr + "\n"
+                    + "Confirmed XSS: " + fc + "\n\n"
+                    + "Skipped: " + fst + " (content-type not enabled), "
+                    + fss + " (out of scope).\n\n"
+                    + (fc > 0 ? "See the Issues tab and Live Results."
+                             : "No XSS confirmed; reflected candidates (if any) are in Live Results."),
+                    "XSSDetector", JOptionPane.INFORMATION_MESSAGE));
+        } catch (Exception e) {
+            callbacks.printError("[" + PLUGIN_NAME + "] Site map sweep error: " + e.getMessage());
+        }
+    }
+
+    /** Content-type filter for the site-map sweep, matching Content Type Management. */
+    private boolean contentTypeEnabledForSweep(String ct, java.util.List<String> enabledTypes) {
+        if (ct == null || ct.isEmpty()) {
+            return false; // no response/type recorded -> nothing to analyse
+        }
+        String c = ct.toLowerCase();
+        if (enabledTypes != null && !enabledTypes.isEmpty()) {
+            for (String e : enabledTypes) {
+                if (e == null || e.isEmpty()) {
+                    continue;
+                }
+                String le = e.toLowerCase();
+                if (c.contains(le) || le.contains(c)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return c.contains("html") || c.contains("json") || c.contains("javascript")
+                || c.contains("xml") || c.contains("text");
+    }
+
+    /** Unique endpoint key so the sweep tests each endpoint once. */
+    private String dedupEndpointKey(IRequestInfo ri, java.net.URL url) {
+        StringBuilder names = new StringBuilder();
+        try {
+            java.util.TreeSet<String> ps = new java.util.TreeSet<>();
+            for (IParameter p : ri.getParameters()) {
+                byte t = p.getType();
+                if (t == IParameter.PARAM_URL || t == IParameter.PARAM_BODY
+                        || t == IParameter.PARAM_JSON || t == IParameter.PARAM_XML
+                        || t == IParameter.PARAM_MULTIPART_ATTR) {
+                    ps.add(t + ":" + p.getName());
+                }
+            }
+            names.append(ps);
+        } catch (Exception ignored) {
+            // key without params
+        }
+        String path = url.getPath() == null ? "" : url.getPath();
+        return ri.getMethod() + " " + url.getHost() + path + " " + names;
     }
 
     @Override

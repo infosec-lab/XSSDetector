@@ -201,4 +201,11 @@ public interface IBurpExtenderCallbacks {
      * @return An IHttpService object.
      */
     IHttpService buildHttpService(String host, int port, boolean useHttps);
+
+    /**
+     * Get the entries in Burp's site map for URLs matching the specified prefix.
+     * @param urlPrefix The URL prefix to match (null for the entire site map).
+     * @return Array of site-map entries (request/response pairs).
+     */
+    IHttpRequestResponse[] getSiteMap(String urlPrefix);
 }
