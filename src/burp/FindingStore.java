@@ -46,6 +46,13 @@ public final class FindingStore {
                     && !XssFinding.STATUS_CONFIRMED.equals(existing.status)) {
                 byKey.put(key, f); // upgrade reflected -> confirmed
                 changed = true;
+            } else if (!XssFinding.STATUS_CONFIRMED.equals(existing.status)
+                    && !XssFinding.STATUS_CONFIRMED.equals(f.status)
+                    && f.messages.size() > existing.messages.size()) {
+                // A tested reflection (Original + probe + Edited attempts) replaces a
+                // barer reflection for the same spot, so the viewer shows the test cases.
+                byKey.put(key, f);
+                changed = true;
             } else {
                 changed = false;
             }

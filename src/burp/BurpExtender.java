@@ -1371,18 +1371,11 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 // view fills as you browse. Active scanning upgrades these to
                 // Confirmed when verified.
                 if (settings != null && settings.getCheckContext() && contextualEngine != null) {
-                    contextualEngine.passiveReflections(messageInfo, toolName);
-
-                    // Realtime: actively probe-and-confirm reflected parameters on
-                    // browsed traffic so genuine reflected XSS is reported as
-                    // Confirmed without a manual active scan (on by default).
                     // Scope policy follows the "Scan in-scope only" setting:
-                    //   - OFF (default): auto-confirm every parameter you browse, so
-                    //     reflected XSS is confirmed just by visiting the page. This
-                    //     is why Burp's Target > Scope no longer has to be configured.
-                    //   - ON: auto-confirm is restricted to in-scope targets only, so
-                    //     browsing arbitrary sites sends no probe traffic.
-                    // Never on Scanner traffic (the active scanner covers that path).
+                    //   - OFF (default): test every parameter you browse, so reflected
+                    //     XSS is confirmed just by visiting the page (no Burp scope setup).
+                    //   - ON: restricted to in-scope targets only (no probe traffic to
+                    //     out-of-scope sites).
                     boolean scopeOk = true;
                     if (settings.getScopeOnly()) {
                         try {
@@ -1391,13 +1384,25 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                             scopeOk = false;
                         }
                     }
-                    if (settings.getAutoConfirm() && scopeOk && toolFlag != IBurpExtenderCallbacks.TOOL_SCANNER) {
+                    boolean autoTest = settings.getAutoConfirm() && scopeOk
+                            && toolFlag != IBurpExtenderCallbacks.TOOL_SCANNER;
+                    if (autoTest) {
+                        // Actively probe-and-confirm each reflected parameter. liveConfirm
+                        // records a CONFIRMED finding when a payload breaks out, or a
+                        // REFLECTED finding WITH the full test log (Original + probe +
+                        // every Edited payload tried) when it does not -- so the viewer
+                        // always shows what was tested. Inert contexts (e.g. strict JSON)
+                        // produce no row, which keeps the feed free of untestable noise.
                         List<IScanIssue> liveIssues = contextualEngine.liveConfirm(messageInfo, toolName);
                         if (liveIssues != null) {
                             for (IScanIssue li : liveIssues) {
                                 reportIssueWithDedup(li); // central de-dup, not a direct addScanIssue
                             }
                         }
+                    } else {
+                        // Auto-testing off (or out of scope / scanner traffic): just record
+                        // where input is reflected, without sending any probe payloads.
+                        contextualEngine.passiveReflections(messageInfo, toolName);
                     }
                 }
             } catch (Exception e) {
