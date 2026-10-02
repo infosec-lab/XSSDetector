@@ -425,6 +425,7 @@ public class ContextualReflectionEngine {
             String host = service != null ? service.getHost() : "";
 
             int done = 0;
+            // 1) Every parsed parameter (query / body / cookie / JSON / XML / multipart).
             for (IParameter p : reqInfo.getParameters()) {
                 if (done >= 40) {
                     break;
@@ -433,46 +434,19 @@ public class ContextualReflectionEngine {
                 if (!isTestableParam(type)) {
                     continue;
                 }
-                final String name = p.getName();
-                stats.params++;
-                Injector injector = injectorFor(baseRequest, name, type);
-
-                ProbeResult pr = probe(injector, service);
-                if (pr == null || pr.best == null) {
-                    done++;
-                    stats.notes.add("'" + name + "': not reflected (or no break-out character survived)");
-                    continue;
+                testInjection(p.getName(), insertionTypeName(type),
+                        injectorFor(baseRequest, p.getName(), type), p.getValue(),
+                        service, rr, source, method, host, url, stats, found);
+                done++;
+            }
+            // 2) URL path segments (folder + filename) -- catches path-based and
+            //    404/error-page reflections that have no query/body parameter.
+            for (PathSeg seg : urlPathSegments(baseRequest)) {
+                if (done >= 40) {
+                    break;
                 }
-                stats.reflected++;
-                Confirmation conf = confirm(injector, service, pr.best);
-                if (conf != null && conf.confirmed) {
-                    IScanIssue issue = buildDynamicIssue(name, insertionTypeName(type), source, pr.best, conf, rr, pr);
-                    if (issue != null) {
-                        found.add(issue);
-                        stats.confirmed++;
-                        stats.notes.add("'" + name + "': CONFIRMED " + pr.best.contextLabel
-                                + " (via " + conf.technique + ")");
-                    }
-                } else {
-                    // Reflected and a break-out looked plausible, but a live PoC did
-                    // not come back executable. Surface it as a REFLECTED candidate in
-                    // Live Results (never as a Burp issue) so the finding is visible
-                    // and the user sees the reflection was detected, not missed.
-                    XssFinding xf = new XssFinding(
-                            "Info", XssFinding.STATUS_REFLECTED, pr.best.contextLabel, name,
-                            method, host, url, source,
-                            "Reflected in " + pr.best.contextLabel
-                            + " but the break-out payload was filtered/encoded - not exploitable as tested.",
-                            rr.getRequest(), rr.getResponse());
-                    xf.reqHighlight = p.getValue();
-                    if (service != null) {
-                        xf.port = service.getPort();
-                        xf.https = "https".equalsIgnoreCase(service.getProtocol());
-                    }
-                    FindingStore.get().add(xf);
-                    stats.notes.add("'" + name + "': reflected in " + pr.best.contextLabel
-                            + " but break-out filtered/encoded (not exploitable)");
-                }
+                testInjection(seg.name, "URL path", seg.injector, seg.value,
+                        service, rr, source, method, host, url, stats, found);
                 done++;
             }
         } catch (Exception e) {
@@ -481,6 +455,106 @@ public class ContextualReflectionEngine {
             }
         }
         return found;
+    }
+
+    /** Probe + confirm one insertion point, recording the outcome in stats and
+     *  surfacing a confirmed issue or a reflected-but-filtered Live Results row. */
+    private void testInjection(String name, String typeLabel, Injector injector, String baseValueHighlight,
+                               IHttpService service, IHttpRequestResponse rr, String source,
+                               String method, String host, String url, ScanStats stats, List<IScanIssue> found) {
+        stats.params++;
+        ProbeResult pr = probe(injector, service);
+        if (pr == null || pr.best == null) {
+            stats.notes.add("'" + name + "': not reflected (or no break-out character survived)");
+            return;
+        }
+        stats.reflected++;
+        Confirmation conf = confirm(injector, service, pr.best);
+        if (conf != null && conf.confirmed) {
+            IScanIssue issue = buildDynamicIssue(name, typeLabel, source, pr.best, conf, rr, pr);
+            if (issue != null) {
+                found.add(issue);
+                stats.confirmed++;
+                stats.notes.add("'" + name + "': CONFIRMED " + pr.best.contextLabel
+                        + " (via " + conf.technique + ")");
+            }
+        } else {
+            XssFinding xf = new XssFinding(
+                    "Info", XssFinding.STATUS_REFLECTED, pr.best.contextLabel, name,
+                    method, host, url, source,
+                    "Reflected in " + pr.best.contextLabel
+                    + " but the break-out payload was filtered/encoded - not exploitable as tested.",
+                    rr.getRequest(), rr.getResponse());
+            xf.reqHighlight = baseValueHighlight;
+            if (service != null) {
+                xf.port = service.getPort();
+                xf.https = "https".equalsIgnoreCase(service.getProtocol());
+            }
+            FindingStore.get().add(xf);
+            stats.notes.add("'" + name + "': reflected in " + pr.best.contextLabel
+                    + " but break-out filtered/encoded (not exploitable)");
+        }
+    }
+
+    /** A URL path segment turned into an injectable insertion point. */
+    private static final class PathSeg {
+        final String name;
+        final String value;
+        final Injector injector;
+        PathSeg(String name, String value, Injector injector) {
+            this.name = name; this.value = value; this.injector = injector;
+        }
+    }
+
+    /** Split the request-line path into segments and build an injector for each
+     *  that rewrites just that segment (URL-encoded) in the full request. */
+    private List<PathSeg> urlPathSegments(final byte[] baseRequest) {
+        List<PathSeg> segs = new ArrayList<>();
+        try {
+            String req = new String(baseRequest, StandardCharsets.ISO_8859_1);
+            int lineEnd = req.indexOf("\r\n");
+            if (lineEnd < 0) {
+                return segs;
+            }
+            String line = req.substring(0, lineEnd);
+            int sp1 = line.indexOf(' ');
+            int sp2 = line.indexOf(' ', sp1 + 1);
+            if (sp1 < 0 || sp2 < 0) {
+                return segs;
+            }
+            String target = line.substring(sp1 + 1, sp2);
+            int q = target.indexOf('?');
+            String path = q >= 0 ? target.substring(0, q) : target;
+            // absolute offset of the path within the full request string
+            int pathAbs = sp1 + 1;
+            int i = 0;
+            int n = path.length();
+            while (i < n) {
+                if (path.charAt(i) == '/') {
+                    i++;
+                    continue;
+                }
+                int start = i;
+                while (i < n && path.charAt(i) != '/') {
+                    i++;
+                }
+                final int segStartAbs = pathAbs + start;
+                final int segEndAbs = pathAbs + i;
+                final String value = path.substring(start, i);
+                if (value.isEmpty()) {
+                    continue;
+                }
+                Injector inj = v -> {
+                    String s = new String(baseRequest, StandardCharsets.ISO_8859_1);
+                    String rebuilt = s.substring(0, segStartAbs) + helpers.urlEncode(v) + s.substring(segEndAbs);
+                    return rebuilt.getBytes(StandardCharsets.ISO_8859_1);
+                };
+                segs.add(new PathSeg("URL path: " + value, value, inj));
+            }
+        } catch (Exception ignored) {
+            // best-effort path parsing
+        }
+        return segs;
     }
 
     /** Lightweight JSON/JSONP context label for the realtime passive feed. */
