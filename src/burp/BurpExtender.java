@@ -1384,25 +1384,26 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                             scopeOk = false;
                         }
                     }
+                    // ALWAYS record where input is reflected (no injection) so the Live
+                    // Results view fills with Info/Reflected rows as you browse -- this
+                    // is the baseline feed and must never be gated off.
+                    contextualEngine.passiveReflections(messageInfo, toolName);
+
+                    // ADDITIONALLY, when auto-confirm is on, actively probe-and-confirm
+                    // each reflected parameter. liveConfirm upgrades a row to CONFIRMED
+                    // when a payload breaks out, or attaches the full test log (Original +
+                    // probe + every Edited payload tried) to the reflected row when it
+                    // does not -- so the viewer shows what was tested. This runs on top of
+                    // the passive feed, never instead of it.
                     boolean autoTest = settings.getAutoConfirm() && scopeOk
                             && toolFlag != IBurpExtenderCallbacks.TOOL_SCANNER;
                     if (autoTest) {
-                        // Actively probe-and-confirm each reflected parameter. liveConfirm
-                        // records a CONFIRMED finding when a payload breaks out, or a
-                        // REFLECTED finding WITH the full test log (Original + probe +
-                        // every Edited payload tried) when it does not -- so the viewer
-                        // always shows what was tested. Inert contexts (e.g. strict JSON)
-                        // produce no row, which keeps the feed free of untestable noise.
                         List<IScanIssue> liveIssues = contextualEngine.liveConfirm(messageInfo, toolName);
                         if (liveIssues != null) {
                             for (IScanIssue li : liveIssues) {
                                 reportIssueWithDedup(li); // central de-dup, not a direct addScanIssue
                             }
                         }
-                    } else {
-                        // Auto-testing off (or out of scope / scanner traffic): just record
-                        // where input is reflected, without sending any probe payloads.
-                        contextualEngine.passiveReflections(messageInfo, toolName);
                     }
                 }
             } catch (Exception e) {
