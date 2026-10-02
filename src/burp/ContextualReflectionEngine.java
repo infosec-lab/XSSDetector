@@ -1090,7 +1090,7 @@ public class ContextualReflectionEngine {
             List<Variant> variants = pocVariants(f);
             int tried = 0;
             for (Variant v : variants) {
-                if (tried >= 8) {
+                if (tried >= 12) {
                     break; // bound the number of live requests
                 }
                 tried++;
@@ -1128,6 +1128,7 @@ public class ContextualReflectionEngine {
                     conf.requestResponse = rr;
                     conf.injectedValue = value;
                     conf.poc = v.expect;
+                    conf.technique = v.label;
                     conf.confirmed = true;
                     conf.snippet = buildSnippet(bodyStr, Math.max(0, l - 24),
                             v.expect.length() + lm.length() + rm.length() + 48);
@@ -1152,38 +1153,67 @@ public class ContextualReflectionEngine {
     private List<Variant> pocVariants(Finding f) {
         List<Variant> out = new ArrayList<>();
         String base = f.poc;
-        add(out, new Variant(base, base, "variant"));
+        add(out, new Variant(base, base, "direct"));
 
         int lt = base.indexOf('<');
         if (lt >= 0 && base.indexOf('>', lt) > lt) {
             // Tag-injection payload: keep the break-out prefix, swap the tag body.
             String prefix = base.substring(0, lt);
-            String[] tags = {
-                "<img src=x onerror=alert(document.domain)>",
-                "<svg onload=alert(document.domain)>",
-                "<img src=x onerror=confirm(1)>",
-                "<img src=x onerror=prompt(1)>",
-                "<img src=x OnErRoR=alert(1)>",      // case-mixing WAF bypass
-                "<svg/onload=alert(1)>"              // slash separator bypass
-            };
-            for (String t : tags) {
-                add(out, new Variant(prefix + t, prefix + t, "variant"));
-            }
+            add(out, new Variant(prefix + "<img src=x onerror=alert(document.domain)>",
+                    prefix + "<img src=x onerror=alert(document.domain)>", "alert(document.domain)"));
+            add(out, new Variant(prefix + "<svg onload=alert(document.domain)>",
+                    prefix + "<svg onload=alert(document.domain)>", "svg onload"));
+            add(out, new Variant(prefix + "<img src=x onerror=confirm(1)>",
+                    prefix + "<img src=x onerror=confirm(1)>", "confirm()"));
+            add(out, new Variant(prefix + "<img src=x onerror=prompt(1)>",
+                    prefix + "<img src=x onerror=prompt(1)>", "prompt()"));
+            add(out, new Variant(prefix + "<img src=x OnErRoR=alert(1)>",
+                    prefix + "<img src=x OnErRoR=alert(1)>", "case-mixing"));
+            add(out, new Variant(prefix + "<svg/onload=alert(1)>",
+                    prefix + "<svg/onload=alert(1)>", "slash separator"));
         } else {
             // JS / attribute / URL payload: vary the sink function only.
             add(out, new Variant(base.replace("alert(1)", "alert(document.domain)"),
-                    base.replace("alert(1)", "alert(document.domain)"), "variant"));
+                    base.replace("alert(1)", "alert(document.domain)"), "alert(document.domain)"));
             add(out, new Variant(base.replace("alert(1)", "confirm(1)"),
-                    base.replace("alert(1)", "confirm(1)"), "variant"));
+                    base.replace("alert(1)", "confirm(1)"), "confirm()"));
             add(out, new Variant(base.replace("alert(1)", "prompt(1)"),
-                    base.replace("alert(1)", "prompt(1)"), "variant"));
+                    base.replace("alert(1)", "prompt(1)"), "prompt()"));
         }
 
-        // Encoding bypasses: inject the percent-encoded payload but expect the
-        // DECODED payload in the response (double/extra-decoding contexts).
+        // Encoding bypasses: inject the ENCODED payload but expect the DECODED
+        // payload in the response (apps that decode an extra time -- a common WAF
+        // bypass). Confirmed only when the executable form actually comes back.
         add(out, new Variant(pctEncode(base), base, "double-URL-encoded"));
         add(out, new Variant(pctEncodeAll(base), base, "full-URL-encoded"));
+        add(out, new Variant(htmlEntityEncode(base), base, "HTML-entity-encoded"));
+        add(out, new Variant(numericEntityEncode(base), base, "HTML numeric-entity-encoded"));
         return out;
+    }
+
+    /** Named HTML entities for the XSS-significant characters. */
+    private String htmlEntityEncode(String s) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '<': b.append("&lt;"); break;
+                case '>': b.append("&gt;"); break;
+                case '"': b.append("&quot;"); break;
+                case '\'': b.append("&#39;"); break;
+                default: b.append(c);
+            }
+        }
+        return b.toString();
+    }
+
+    /** Decimal HTML numeric entities for every character. */
+    private String numericEntityEncode(String s) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            b.append("&#").append((int) s.charAt(i)).append(';');
+        }
+        return b.toString();
     }
 
     private void add(List<Variant> list, Variant v) {
@@ -1286,7 +1316,7 @@ public class ContextualReflectionEngine {
 
             // Professional, Burp-consistent issue name; parameter/context in the detail.
             String name = "Cross-Site Scripting (Reflected)";
-            String detail = renderDetail(f, param, insType);
+            String detail = renderDetail(f, param, insType, conf.technique);
 
             // Feed the Live Results view (confirmed by live PoC).
             try {
@@ -1303,6 +1333,7 @@ public class ContextualReflectionEngine {
                         source, f.poc, evidence.getRequest(), evidence.getResponse());
                 xf.reqHighlight = conf.injectedValue; // the injected probe value in the request
                 xf.respHighlight = f.poc;             // the payload as reflected in the response
+                xf.technique = conf.technique;        // which bypass technique confirmed it
                 if (svc != null) {
                     xf.port = svc.getPort();
                     xf.https = "https".equalsIgnoreCase(svc.getProtocol());
@@ -1345,13 +1376,17 @@ public class ContextualReflectionEngine {
     }
 
     /** Only live, dynamic evidence -- no remediation or static background. */
-    private String renderDetail(Finding f, String param, String insType) {
+    private String renderDetail(Finding f, String param, String insType, String technique) {
         StringBuilder d = new StringBuilder();
         d.append("<p><b>Confirmed reflected cross-site scripting</b> - detected by a live context probe and verified by injecting the proof-of-concept.</p>");
         // Parameter kept as plain text immediately after the label so Burp and the
         // de-duplicator read it correctly (distinct parameters stay distinct issues).
         d.append("<p><b>Parameter:</b> ").append(esc(param)).append(" <i>(").append(esc(insType)).append(")</i></p>");
         d.append("<p><b>Reflection context:</b> ").append(esc(f.contextLabel)).append("</p>");
+        if (technique != null && !technique.isEmpty()) {
+            d.append("<p><b>Confirmed via:</b> ").append(esc(technique))
+             .append(" &mdash; the payload executes alert()/confirm()/prompt() in the browser.</p>");
+        }
         d.append("<p><b>Why it is exploitable:</b> ").append(esc(f.reason)).append("</p>");
 
         d.append("<h4>Break-out character test (live)</h4>");
@@ -1641,6 +1676,7 @@ public class ContextualReflectionEngine {
         IHttpRequestResponse requestResponse; // the request/response that confirmed
         String injectedValue;                 // full injected value (markers + poc)
         String poc;                           // the winning exploit payload
+        String technique = "direct";          // which bypass technique confirmed it
         boolean confirmed;
         String snippet;
         final List<Attempt> attempts = new ArrayList<>(); // every variant tried

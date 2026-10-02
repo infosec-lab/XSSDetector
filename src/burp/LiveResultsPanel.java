@@ -345,8 +345,10 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
                 ? "<b>CONFIRMED</b> " + esc(f.severity) + " XSS"
                 : "<b>Reflected</b> (unconfirmed - run an active scan)";
         String poc = confirmed ? "&nbsp; Payload: <code>" + esc(f.poc) + "</code>" : "";
+        String via = (confirmed && f.technique != null && !f.technique.isEmpty() && !"direct".equals(f.technique))
+                ? " &nbsp;|&nbsp; via: <b>" + esc(f.technique) + "</b>" : "";
         pocBar.setText("<html>" + label + " &nbsp;|&nbsp; Parameter: <b>" + esc(f.parameter)
-                + "</b> &nbsp;|&nbsp; Context: " + esc(f.context) + poc + "</html>");
+                + "</b> &nbsp;|&nbsp; Context: " + esc(f.context) + via + poc + "</html>");
     }
 
     private static String esc(String s) {

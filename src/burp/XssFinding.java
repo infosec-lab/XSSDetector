@@ -30,6 +30,7 @@ public final class XssFinding {
     public String respHighlight;  // substring to highlight+scroll-to in the response
     public int port;
     public boolean https;
+    public String technique;      // the bypass technique that confirmed it (direct, double-URL-encoded, ...)
 
     /** One request/response pair shown in the viewer (Original, Edited 1, ...). */
     public static final class Msg {
