@@ -6,8 +6,14 @@ Short notes on using the extension and reading its UI. Load the JAR in
 ## Tabs
 
 - **Live Results** — findings as they happen, plus filters and a request/response viewer.
-- **Settings** — what to run (engines, payload packs, reporting).
-- **Content Types** — which response types to look at (text/html and application/json on by default).
+- **Settings** — what to run (engines, payload packs, reporting) and, at the bottom,
+  **Content Type Management** (which response types to look at; text/html and
+  application/json on by default).
+
+All findings, whatever the detector (reflected, DOM, postMessage, client-side,
+stored, template injection), are reported with one consistent name
+— *Cross-Site Scripting (&lt;class&gt;)* — and a dynamic, evidence-only detail; one
+row per URL + parameter + class (no payload duplicates).
 
 ## Live Results
 

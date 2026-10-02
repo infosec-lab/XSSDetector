@@ -1083,40 +1083,22 @@ public class EnhancedIssueReporter {
         String scanType = (String) vulnerabilityData.get("SCAN_TYPE");
         String vulnType = (String) vulnerabilityData.get("vulnerabilityType");
         
-        // Professional naming format: "Cross-Site Scripting (XSS) - [Type] - [Parameter]"
-        StringBuilder issueName = new StringBuilder("Cross-Site Scripting (XSS)");
-        
-        // Add type suffix
-        if (vulnType != null) {
-            if (vulnType.contains("DOM") || (scanType != null && scanType.contains("DOM"))) {
-                issueName.append(" - DOM-based");
-            } else if (vulnType.contains("Client-Side") || (scanType != null && scanType.contains("Client-Side"))) {
-                issueName.append(" - Client-side");
-            } else if (scanType != null && "Advanced".equals(scanType)) {
-                issueName.append(" - Reflected");
-            } else if (scanType != null && "Basic".equals(scanType)) {
-                issueName.append(" - Reflected");
-            } else {
-                issueName.append(" - Reflected");
-            }
-        } else if (scanType != null) {
-            if (scanType.contains("DOM")) {
-                issueName.append(" - DOM-based");
-            } else if (scanType.contains("Client-Side")) {
-                issueName.append(" - Client-side");
-            } else {
-                issueName.append(" - Reflected");
-            }
+        // Unified, contextual naming: "Cross-Site Scripting (<Class>)".
+        // The class alone goes in the name; the parameter/context live in the
+        // detail (consistent with the contextual engine and the de-dup key).
+        String type = (vulnType != null ? vulnType : "") + " " + (scanType != null ? scanType : "");
+        String cls;
+        if (type.toLowerCase().contains("dom")) {
+            cls = "DOM-based";
+        } else if (type.toLowerCase().contains("client-side")) {
+            cls = "Client-side";
+        } else if (type.toLowerCase().contains("stored")) {
+            cls = "Stored";
         } else {
-            issueName.append(" - Reflected");
+            cls = "Reflected";
         }
-        
-        // Add parameter name
-        if (cleanParamName != null && !cleanParamName.trim().isEmpty()) {
-            issueName.append(" - ").append(cleanParamName);
-        }
-        
-        return issueName.toString();
+        // cleanParamName is intentionally not appended to the name.
+        return "Cross-Site Scripting (" + cls + ")";
     }
     
     /**

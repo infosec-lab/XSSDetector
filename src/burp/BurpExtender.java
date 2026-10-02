@@ -335,12 +335,19 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             tabs.addTab("Live Results", liveResults);
 
             // --- Tab 2: Settings (left-aligned, scrollable sections) ---
+            // Content-type management lives here too, as its own section.
             JPanel column = new JPanel();
             column.setLayout(new BoxLayout(column, BoxLayout.Y_AXIS));
             column.setBorder(BorderFactory.createEmptyBorder(12, 14, 12, 14));
             column.add(createHeader());
             column.add(Box.createVerticalStrut(10));
             column.add(createSettingsPanel());
+            column.add(Box.createVerticalStrut(10));
+
+            JPanel contentTypePanel = createContentTypePanel();
+            contentTypePanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+            contentTypePanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 260));
+            column.add(contentTypePanel);
 
             JPanel settingsHolder = new JPanel(new BorderLayout());
             settingsHolder.add(column, BorderLayout.NORTH);
@@ -350,12 +357,6 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             settingsScroll.setBorder(null);
             settingsScroll.getVerticalScrollBar().setUnitIncrement(16);
             tabs.addTab("Settings", settingsScroll);
-
-            // --- Tab 3: Content Types ---
-            JPanel ctWrap = new JPanel(new BorderLayout());
-            ctWrap.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
-            ctWrap.add(createContentTypePanel(), BorderLayout.CENTER);
-            tabs.addTab("Content Types", ctWrap);
 
             panel.add(tabs, BorderLayout.CENTER);
 
