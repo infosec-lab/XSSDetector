@@ -376,6 +376,19 @@ public class ContextualReflectionEngine {
      * Pro scanner). Returns confirmed issues for the caller to report.
      */
     public List<IScanIssue> scanRequest(IHttpRequestResponse rr, String source) {
+        return scanRequest(rr, source, new ScanStats());
+    }
+
+    /** Per-request diagnostics for the Active XSS scan, so a "0 confirmed" result
+     *  is explained (what reflected, in which context) instead of silent. */
+    public static final class ScanStats {
+        public int params;        // URL/body/cookie parameters tested
+        public int reflected;     // parameters whose injection was reflected
+        public int confirmed;     // parameters with a confirmed break-out
+        public final java.util.List<String> notes = new java.util.ArrayList<>();
+    }
+
+    public List<IScanIssue> scanRequest(IHttpRequestResponse rr, String source, ScanStats stats) {
         List<IScanIssue> found = new ArrayList<>();
         try {
             if (rr == null || rr.getRequest() == null) {
@@ -384,6 +397,9 @@ public class ContextualReflectionEngine {
             final IHttpService service = rr.getHttpService();
             final byte[] baseRequest = rr.getRequest();
             IRequestInfo reqInfo = helpers.analyzeRequest(rr);
+            String method = reqInfo.getMethod();
+            String url = reqInfo.getUrl() != null ? reqInfo.getUrl().toString() : "";
+            String host = service != null ? service.getHost() : "";
 
             int done = 0;
             for (IParameter p : reqInfo.getParameters()) {
@@ -395,20 +411,45 @@ public class ContextualReflectionEngine {
                     continue;
                 }
                 final String name = p.getName();
+                stats.params++;
                 Injector injector = v -> helpers.updateParameter(baseRequest,
                         helpers.buildParameter(name, helpers.urlEncode(v), type));
 
                 ProbeResult pr = probe(injector, service);
                 if (pr == null || pr.best == null) {
                     done++;
+                    stats.notes.add("'" + name + "': not reflected (or no break-out character survived)");
                     continue;
                 }
+                stats.reflected++;
                 Confirmation conf = confirm(injector, service, pr.best);
                 if (conf != null && conf.confirmed) {
                     IScanIssue issue = buildDynamicIssue(name, insertionTypeName(type), source, pr.best, conf, rr, pr);
                     if (issue != null) {
                         found.add(issue);
+                        stats.confirmed++;
+                        stats.notes.add("'" + name + "': CONFIRMED " + pr.best.contextLabel
+                                + " (via " + conf.technique + ")");
                     }
+                } else {
+                    // Reflected and a break-out looked plausible, but a live PoC did
+                    // not come back executable. Surface it as a REFLECTED candidate in
+                    // Live Results (never as a Burp issue) so the finding is visible
+                    // and the user sees the reflection was detected, not missed.
+                    XssFinding xf = new XssFinding(
+                            "Info", XssFinding.STATUS_REFLECTED, pr.best.contextLabel, name,
+                            method, host, url, source,
+                            "Reflected in " + pr.best.contextLabel
+                            + " but the break-out payload was filtered/encoded - not exploitable as tested.",
+                            rr.getRequest(), rr.getResponse());
+                    xf.reqHighlight = p.getValue();
+                    if (service != null) {
+                        xf.port = service.getPort();
+                        xf.https = "https".equalsIgnoreCase(service.getProtocol());
+                    }
+                    FindingStore.get().add(xf);
+                    stats.notes.add("'" + name + "': reflected in " + pr.best.contextLabel
+                            + " but break-out filtered/encoded (not exploitable)");
                 }
                 done++;
             }

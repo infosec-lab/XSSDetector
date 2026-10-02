@@ -540,7 +540,7 @@ public class EnhancedDOMXSSDetector {
                 analysis.setHasMutationObserver(true);
                 analysis.setMutationObserverRisk("HIGH");
                 analysis.getRealTimeVectors().add("MutationObserver");
-                callbacks.printOutput("[REALTIME] MutationObserver detected with actual usage - Real-time DOM monitoring active");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] MutationObserver detected with actual usage - Real-time DOM monitoring active");
             }
         }
         
@@ -559,7 +559,7 @@ public class EnhancedDOMXSSDetector {
                 analysis.setHasWebSocket(true);
                 analysis.setWebSocketRisk("HIGH");
                 analysis.getRealTimeVectors().add("WebSocket");
-                callbacks.printOutput("[REALTIME] WebSocket detected with actual usage - Real-time communication active");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] WebSocket detected with actual usage - Real-time communication active");
             }
         }
         
@@ -568,7 +568,7 @@ public class EnhancedDOMXSSDetector {
             analysis.setHasEventSource(true);
             analysis.setEventSourceRisk("MEDIUM");
             analysis.getRealTimeVectors().add("EventSource");
-            callbacks.printOutput("[REALTIME] EventSource detected - Server-sent events possible");
+            if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] EventSource detected - Server-sent events possible");
         }
         
         // SERVICE WORKER DETECTION - Enhanced with regex patterns
@@ -586,7 +586,7 @@ public class EnhancedDOMXSSDetector {
                 analysis.setHasServiceWorker(true);
                 analysis.setServiceWorkerRisk("HIGH");
                 analysis.getRealTimeVectors().add("ServiceWorker");
-                callbacks.printOutput("[REALTIME] ServiceWorker detected with registration - Background processing active");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] ServiceWorker detected with registration - Background processing active");
             }
         }
         
@@ -605,7 +605,7 @@ public class EnhancedDOMXSSDetector {
                 analysis.setHasWebWorker(true);
                 analysis.setWebWorkerRisk("MEDIUM");
                 analysis.getRealTimeVectors().add("WebWorker");
-                callbacks.printOutput("[REALTIME] WebWorker detected with instantiation - Background threading active");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] WebWorker detected with instantiation - Background threading active");
             }
         }
         
@@ -624,7 +624,7 @@ public class EnhancedDOMXSSDetector {
                 analysis.setHasBroadcastChannel(true);
                 analysis.setBroadcastChannelRisk("MEDIUM");
                 analysis.getRealTimeVectors().add("BroadcastChannel");
-                callbacks.printOutput("[REALTIME] BroadcastChannel detected with usage - Cross-tab communication active");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] BroadcastChannel detected with usage - Cross-tab communication active");
             }
         }
         
@@ -643,7 +643,7 @@ public class EnhancedDOMXSSDetector {
                 analysis.setHasDynamicImport(true);
                 analysis.setDynamicImportRisk("HIGH");
                 analysis.getRealTimeVectors().add("DynamicImport");
-                callbacks.printOutput("[REALTIME] Dynamic Import detected with usage - Runtime module loading active");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] Dynamic Import detected with usage - Runtime module loading active");
             }
         }
         
@@ -662,7 +662,7 @@ public class EnhancedDOMXSSDetector {
                 analysis.setHasSharedArrayBuffer(true);
                 analysis.setSharedArrayBufferRisk("HIGH");
                 analysis.getRealTimeVectors().add("SharedArrayBuffer");
-                callbacks.printOutput("[REALTIME] SharedArrayBuffer detected with usage - Shared memory active");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] SharedArrayBuffer detected with usage - Shared memory active");
             }
         }
         
@@ -681,7 +681,7 @@ public class EnhancedDOMXSSDetector {
                 analysis.setHasWebAssembly(true);
                 analysis.setWebAssemblyRisk("HIGH");
                 analysis.getRealTimeVectors().add("WebAssembly");
-                callbacks.printOutput("[REALTIME] WebAssembly detected with usage - Native code execution active");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] WebAssembly detected with usage - Native code execution active");
             }
         }
         
@@ -690,7 +690,7 @@ public class EnhancedDOMXSSDetector {
             analysis.setHasRequestAnimationFrame(true);
             analysis.setRequestAnimationFrameRisk("MEDIUM");
             analysis.getRealTimeVectors().add("RequestAnimationFrame");
-            callbacks.printOutput("[REALTIME] RequestAnimationFrame detected - Animation loop possible");
+            if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] RequestAnimationFrame detected - Animation loop possible");
         }
         
         // PROMISE/ASYNC DETECTION
@@ -698,7 +698,7 @@ public class EnhancedDOMXSSDetector {
             analysis.setHasPromiseAsync(true);
             analysis.setPromiseAsyncRisk("MEDIUM");
             analysis.getRealTimeVectors().add("PromiseAsync");
-            callbacks.printOutput("[REALTIME] Promise/Async detected - Asynchronous execution possible");
+            if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] Promise/Async detected - Asynchronous execution possible");
         }
         
         // PROXY DETECTION
@@ -706,7 +706,7 @@ public class EnhancedDOMXSSDetector {
             analysis.setHasProxy(true);
             analysis.setProxyRisk("HIGH");
             analysis.getRealTimeVectors().add("Proxy");
-            callbacks.printOutput("[REALTIME] Proxy detected - Object interception possible");
+            if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] Proxy detected - Object interception possible");
         }
         
         // REFLECT API DETECTION
@@ -714,7 +714,7 @@ public class EnhancedDOMXSSDetector {
             analysis.setHasReflectAPI(true);
             analysis.setReflectAPIRisk("MEDIUM");
             analysis.getRealTimeVectors().add("ReflectAPI");
-            callbacks.printOutput("[REALTIME] Reflect API detected - Meta-programming possible");
+            if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] Reflect API detected - Meta-programming possible");
         }
         
         // OBSERVER API DETECTION
@@ -722,7 +722,7 @@ public class EnhancedDOMXSSDetector {
             analysis.setHasObserverAPI(true);
             analysis.setObserverAPIRisk("MEDIUM");
             analysis.getRealTimeVectors().add("ObserverAPI");
-            callbacks.printOutput("[REALTIME] Observer API detected - Event monitoring possible");
+            if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[REALTIME] Observer API detected - Event monitoring possible");
         }
         
         // Calculate real-time risk score
@@ -1324,7 +1324,7 @@ public class EnhancedDOMXSSDetector {
                     result.setTestResponse(new String(actualResponse, StandardCharsets.UTF_8));
                 }
                 result.setTestPayload(payload);
-                callbacks.printOutput("[DOM-XSS] Using actual request/response for evidence");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[DOM-XSS] Using actual request/response for evidence");
             } catch (Exception e) {
                 callbacks.printError("[DOM-XSS] Error processing actual request/response: " + e.getMessage());
             }

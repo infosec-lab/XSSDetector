@@ -649,13 +649,13 @@ public class EnhancedIssueReporter {
         try {
             // FINAL VALIDATION STEP 1: Check if vulnerability is truly exploitable
             if (!isVulnerabilityTrulyExploitable(vulnerabilityData)) {
-                callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Vulnerability not truly exploitable");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Vulnerability not truly exploitable");
                 return null;
             }
             
             String payload = extractRealPayload(vulnerabilityData);
             if (payload == null || payload.trim().isEmpty()) {
-                callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Payload is null or empty");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Payload is null or empty");
                 return null;
             }
             
@@ -664,7 +664,7 @@ public class EnhancedIssueReporter {
             if (confidenceObj instanceof Number) {
                 double confidence = ((Number) confidenceObj).doubleValue();
                 if (confidence <= 0.0) {
-                    callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Confidence score is 0 (false positive)");
+                    if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Confidence score is 0 (false positive)");
                     return null;
                 }
             }
@@ -675,7 +675,7 @@ public class EnhancedIssueReporter {
                 String vulnType = (String) vulnTypeObj;
                 if (vulnType != null && (vulnType.contains("False Positive") || 
                     vulnType.contains("Safely Escaped") || vulnType.contains("Not Exploitable"))) {
-                    callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Vulnerability type indicates false positive: " + vulnType);
+                    if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Vulnerability type indicates false positive: " + vulnType);
                     return null;
                 }
             }
@@ -689,11 +689,11 @@ public class EnhancedIssueReporter {
             // Check if payload is in a non-exploitable context
             if (reflectionContext != null) {
                 if (reflectionContext.contains("Comment") || reflectionContext.contains("COMMENT")) {
-                    callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Payload in HTML comment (not exploitable)");
+                    if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Payload in HTML comment (not exploitable)");
                     return null;
                 }
                 if (reflectionContext.contains("Safely Escaped") || reflectionContext.contains("False Positive")) {
-                    callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Reflection context indicates false positive");
+                    if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Reflection context indicates false positive");
                     return null;
                 }
             }
@@ -704,7 +704,7 @@ public class EnhancedIssueReporter {
                 (scanType.toLowerCase().contains("dom") || scanType.toLowerCase().contains("client-side"));
             
             if (!clientSideIssue && !isActualXSSPayload(payload)) {
-                callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Payload is not an actual XSS payload");
+                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Payload is not an actual XSS payload");
                 return null;
             }
             
@@ -739,7 +739,7 @@ public class EnhancedIssueReporter {
                             // Otherwise require >= 90 for pattern-only detection
                             double threshold = (Boolean.TRUE.equals(confirmed) && testRequestObj != null && testResponseObj != null) ? 80.0 : 90.0;
                             if (riskScore < threshold || confidenceScore < threshold) {
-                                callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Client-side issue - payload NOT reflected and risk/confidence scores too low (risk: " + riskScore + ", confidence: " + confidenceScore + ") - requiring >= " + threshold + " for detection");
+                                if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Client-side issue - payload NOT reflected and risk/confidence scores too low (risk: " + riskScore + ", confidence: " + confidenceScore + ") - requiring >= " + threshold + " for detection");
                                 return null;
                             }
                         }
@@ -752,7 +752,7 @@ public class EnhancedIssueReporter {
                     
                     // CRITICAL: Without test data, require VERY HIGH scores AND CONFIRMED_XSS flag
                     if (!Boolean.TRUE.equals(confirmed) || riskScore < 90.0 || confidenceScore < 90.0) {
-                        callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Client-side issue - no test data and insufficient scores (risk: " + riskScore + ", confidence: " + confidenceScore + ", confirmed: " + confirmed + ")");
+                        if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: Client-side issue - no test data and insufficient scores (risk: " + riskScore + ", confidence: " + confidenceScore + ", confirmed: " + confirmed + ")");
                         return null;
                     }
                 }
@@ -775,13 +775,13 @@ public class EnhancedIssueReporter {
                 boolean hasVeryHighScore = riskScore >= 90.0 && confScore >= 90.0;
                 
                 if (!hasTestData && !hasVeryHighScore) {
-                    callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: CSP misconfiguration + client-side vectors - no actual exploitable evidence (risk: " + riskScore + ", confidence: " + confScore + ")");
+                    if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION FAILED: CSP misconfiguration + client-side vectors - no actual exploitable evidence (risk: " + riskScore + ", confidence: " + confScore + ")");
                     return null;
                 }
             }
             
             // FINAL VALIDATION PASSED - Proceed with issue creation
-            callbacks.printOutput("[IssueReporter] FINAL VALIDATION PASSED: All checks confirmed - creating issue");
+            if (settings != null && settings.getVerboseLogging()) callbacks.printOutput("[IssueReporter] FINAL VALIDATION PASSED: All checks confirmed - creating issue");
             
             // Get analysis results
             ModernArchitectureDetector.ArchitectureAnalysis archAnalysis = 

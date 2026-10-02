@@ -918,6 +918,9 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
     private void runMenuScan(IHttpRequestResponse[] selected) {
         int confirmed = 0;
         int scanned = 0;
+        int paramsTested = 0;
+        int reflectedParams = 0;
+        List<String> allNotes = new ArrayList<>();
         try {
             if (contextualEngine == null) {
                 return;
@@ -927,7 +930,8 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                     continue;
                 }
                 scanned++;
-                List<IScanIssue> issues = contextualEngine.scanRequest(rr, "Menu scan");
+                ContextualReflectionEngine.ScanStats stats = new ContextualReflectionEngine.ScanStats();
+                List<IScanIssue> issues = contextualEngine.scanRequest(rr, "Menu scan", stats);
                 if (issues != null) {
                     for (IScanIssue issue : issues) {
                         if (reportIssueWithDedup(issue)) {
@@ -935,17 +939,45 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                         }
                     }
                 }
+                paramsTested += stats.params;
+                reflectedParams += stats.reflected;
+                allNotes.addAll(stats.notes);
             }
             final int c = confirmed;
             final int s = scanned;
-            callbacks.printOutput("[" + PLUGIN_NAME + "] Active XSS scan: " + s + " request(s) scanned, "
-                    + c + " confirmed issue(s) reported.");
+            final int pt = paramsTested;
+            final int rp = reflectedParams;
+            callbacks.printOutput("[" + PLUGIN_NAME + "] Active XSS scan: " + s + " request(s), "
+                    + pt + " parameter(s) tested, " + rp + " reflected, " + c + " confirmed.");
+            for (String note : allNotes) {
+                callbacks.printOutput("[" + PLUGIN_NAME + "]   - " + note);
+            }
+            final StringBuilder detail = new StringBuilder();
+            detail.append("Active XSS scan complete.\n\n")
+                  .append("Requests scanned: ").append(s).append('\n')
+                  .append("Parameters tested: ").append(pt).append('\n')
+                  .append("Reflected: ").append(rp).append('\n')
+                  .append("Confirmed XSS: ").append(c).append("\n\n");
+            if (c > 0) {
+                detail.append("See the Issues tab and the Live Results tab.");
+            } else if (rp > 0) {
+                detail.append("Parameters reflected but no break-out confirmed (filtered/encoded).\n")
+                      .append("Reflected candidates are listed in the Live Results tab.");
+            } else if (pt > 0) {
+                detail.append("No reflection detected in the tested parameter(s).");
+            } else {
+                detail.append("No URL/body/cookie parameters to test on the selected request(s).");
+            }
+            if (!allNotes.isEmpty()) {
+                detail.append("\n\nPer-parameter:");
+                int shown = 0;
+                for (String note : allNotes) {
+                    if (shown++ >= 12) { detail.append("\n  ... (see extension output)"); break; }
+                    detail.append("\n  - ").append(note);
+                }
+            }
             SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(panel,
-                    "Active XSS scan complete.\n\nRequests scanned: " + s
-                    + "\nConfirmed XSS reported: " + c
-                    + (c > 0 ? "\n\nSee the Issues tab and the Live Results tab."
-                             : "\n\nNo reflected XSS confirmed on the selected request(s)."),
-                    "XSSDetector", JOptionPane.INFORMATION_MESSAGE));
+                    detail.toString(), "XSSDetector", JOptionPane.INFORMATION_MESSAGE));
         } catch (Exception e) {
             callbacks.printError("[" + PLUGIN_NAME + "] Menu scan error: " + e.getMessage());
         }
