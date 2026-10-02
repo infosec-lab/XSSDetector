@@ -7,9 +7,10 @@
 [![Burp Suite](https://img.shields.io/badge/Burp%20Suite-2023.1%2B-orange.svg)](https://portswigger.net/burp)
 [![Version](https://img.shields.io/badge/Version-2.0.0-green.svg)](https://github.com/infosec-lab/XSSDetector/releases)
 
-A Burp Suite extension that detects reflected, stored, DOM, and client-side XSS
-using context-aware payloads, encoding/filter-bypass techniques, and
-source-to-sink analysis — with validated, reproducible findings.
+A Burp Suite extension that detects reflected XSS (HTML, attribute, JavaScript,
+CSS and JSON/JSONP contexts) by injecting a context-aware probe and confirming a
+live break-out with a working alert()/confirm()/prompt() payload — only verified,
+reproducible findings, with no score thresholds and near-zero false positives.
 
 </div>
 
@@ -76,13 +77,14 @@ Confirm the **XSSDetector** tab appears and that there are no errors in
 
 ## Usage
 
-The tab has three sections: **Live Results** (real-time findings table + smart
-filters + request/response viewer), **Settings** (engines, payload packs,
-reporting), and **Content Types** (which response types to analyse).
+The tab has two sections: **Live Results** (real-time findings table + smart
+filters + request/response viewer) and **Settings** (detection + reporting, with
+**Content Type Management** at the bottom for which response types to analyse).
 
-1. Set your target in Burp's scope (optionally enable **Scope only**).
-2. In **Settings**, enable the checks you need — the Contextual reflection engine
-   is on by default; add Modern Detection, DOM XSS, and payload packs as needed.
+1. Load the extension and open the **XSSDetector** tab. Nothing else to configure
+   — the Contextual reflection engine and live auto-confirm are on by default.
+2. (Optional) enable **Scan in-scope targets only** to restrict auto-confirm to
+   Burp's Target scope; otherwise it auto-confirms everything you browse.
 3. Browse the target: reflections appear live in **Live Results**. Run Burp's
    scanner (or right-click → Scan) to confirm them — confirmed findings also land
    in Burp's **Issues** tab with a live break-out table and a ready PoC.
