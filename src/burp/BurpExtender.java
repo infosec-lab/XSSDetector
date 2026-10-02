@@ -67,22 +67,18 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
     private JCheckBox verboseLogging;
     
     // Core Detection Engines
-    private CheckReflection checkReflection;
     private ModernArchitectureDetector architectureDetector;
-    private AdvancedJSONAnalyzer jsonAnalyzer; 
+    private AdvancedJSONAnalyzer jsonAnalyzer;
     private EnhancedIssueReporter issueReporter;
     private AIContextAnalyzer aiAnalyzer;
-    private EngineIntegrationManager engineIntegrationManager;
     private PerformanceMonitor performanceMonitor;
     private ErrorRecoverySystem errorRecoverySystem;
 
     // Enhanced Detection Engines
     private EnhancedDOMXSSDetector domXssDetector;
     private EnhancedClientSideAttackDetector clientSideDetector;
-    private EnhancedAggressive aggressiveDetector;
     private ContextualReflectionEngine contextualEngine;
     private LiveResultsPanel liveResults;
-    private AdvancedFilteringEngine filteringEngine;
     private ModernXSSAnalyzer modernXssAnalyzer;
     
     // Scan Control
@@ -178,7 +174,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         
         try {
             // CRITICAL: Initialize PerformanceMonitor and ErrorRecoverySystem FIRST
-            // These are needed by CheckReflection and other engines
+            // These are needed by the detection engines
             // Performance monitoring
             try {
                 this.performanceMonitor = new PerformanceMonitor(callbacks);
@@ -203,15 +199,6 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 enginesInitialized++;
             } catch (Exception e) {
                 callbacks.printError("[" + PLUGIN_NAME + "] CRITICAL: Failed to initialize EnhancedIssueReporter: " + e.getMessage());
-                enginesFailed++;
-            }
-            
-            // Core reflection detection (now has access to performanceMonitor and errorRecoverySystem)
-            try {
-                this.checkReflection = new CheckReflection(helpers, callbacks, settings, performanceMonitor, errorRecoverySystem);
-                enginesInitialized++;
-            } catch (Exception e) {
-                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize CheckReflection: " + e.getMessage());
                 enginesFailed++;
             }
             
@@ -259,14 +246,6 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 enginesFailed++;
             }
 
-            try {
-                this.aggressiveDetector = new EnhancedAggressive(helpers, callbacks, settings);
-                enginesInitialized++;
-            } catch (Exception e) {
-                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize EnhancedAggressive: " + e.getMessage());
-                enginesFailed++;
-            }
-
             // Contextual reflection engine (context-aware probe-and-confirm,
             // including JSON/JSONP) -- the primary context-aware detector.
             try {
@@ -274,14 +253,6 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 enginesInitialized++;
             } catch (Exception e) {
                 callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize ContextualReflectionEngine: " + e.getMessage());
-                enginesFailed++;
-            }
-
-            try {
-                this.filteringEngine = new AdvancedFilteringEngine(helpers, callbacks, settings);
-                enginesInitialized++;
-            } catch (Exception e) {
-                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize AdvancedFilteringEngine: " + e.getMessage());
                 enginesFailed++;
             }
 
@@ -294,22 +265,6 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 enginesFailed++;
             }
 
-            // Engine integration - INJECT existing engines to avoid duplication
-            try {
-                this.engineIntegrationManager = new EngineIntegrationManager(
-                    helpers, callbacks, settings,
-                    domXssDetector,           // Inject existing instance
-                    clientSideDetector,       // Inject existing instance
-                    architectureDetector,     // Inject existing instance
-                    filteringEngine,          // Inject existing instance
-                    aggressiveDetector        // Inject existing instance
-                );
-                enginesInitialized++;
-            } catch (Exception e) {
-                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize EngineIntegrationManager: " + e.getMessage());
-                enginesFailed++;
-            }
-            
             callbacks.printOutput("[" + PLUGIN_NAME + "] Detection engines initialized: " + enginesInitialized + " successful, " + enginesFailed + " failed");
             
             if (enginesFailed > 0) {
@@ -494,99 +449,10 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         col.add(Box.createVerticalStrut(8));
 
         col.add(section("Reporting", grid(3, detailedReporting, exploitGeneration, verboseLogging)));
-        col.add(Box.createVerticalStrut(8));
-
-        // Maintenance actions.
-        JButton clearCacheButton = new JButton("Clear response cache");
-        clearCacheButton.addActionListener(e -> {
-            ResponseCache cache = EnhancedAggressive.getResponseCache();
-            if (cache != null) {
-                cache.clearCache();
-                callbacks.printOutput("[" + PLUGIN_NAME + "] Response cache cleared");
-            }
-        });
-        JButton showStatsButton = new JButton("Show cache statistics");
-        showStatsButton.addActionListener(e -> showCacheStatistics());
-        JPanel maint = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
-        maint.add(clearCacheButton);
-        maint.add(showStatsButton);
-        col.add(section("Maintenance", maint));
 
         return col;
     }
-    
-    /**
-     * Show cache and tracking statistics
-     */
-    private void showCacheStatistics() {
-        try {
-            StringBuilder stats = new StringBuilder();
-            stats.append("=== XSSDetector Advanced Statistics ===\n\n");
-            
-            // Response cache statistics
-            ResponseCache cache = EnhancedAggressive.getResponseCache();
-            if (cache != null) {
-                Map<String, Object> cacheStats = cache.getStatistics();
-                stats.append("Response Cache:\n");
-                stats.append("  Size: ").append(cacheStats.get("size")).append(" entries\n");
-                stats.append("  Hits: ").append(cacheStats.get("hits")).append("\n");
-                stats.append("  Misses: ").append(cacheStats.get("misses")).append("\n");
-                double hitRate = (Double) cacheStats.get("hitRate");
-                stats.append("  Hit Rate: ").append(String.format("%.2f%%", hitRate * 100)).append("\n\n");
-            }
-            
-            // Payload tracker statistics
-            PayloadSuccessTracker tracker = EnhancedAggressive.getPayloadTracker();
-            if (tracker != null) {
-                Map<String, Object> trackerStats = tracker.getStatistics();
-                stats.append("Payload Success Tracker:\n");
-                stats.append("  Total Payloads: ").append(trackerStats.get("totalPayloads")).append("\n");
-                stats.append("  Successful Payloads: ").append(trackerStats.get("successfulPayloads")).append("\n");
-                stats.append("  Recent Successes: ").append(trackerStats.get("recentSuccesses")).append("\n");
-                double avgRate = (Double) trackerStats.get("averageSuccessRate");
-                stats.append("  Average Success Rate: ").append(String.format("%.2f%%", avgRate * 100)).append("\n\n");
-                
-                // Show top payloads
-                List<String> topPayloads = tracker.getTopPayloads(5);
-                if (!topPayloads.isEmpty()) {
-                    stats.append("Top 5 Payloads:\n");
-                    for (int i = 0; i < topPayloads.size(); i++) {
-                        String payload = topPayloads.get(i);
-                        double rate = tracker.getSuccessRate(payload);
-                        stats.append("  ").append(i + 1).append(". ").append(payload.substring(0, Math.min(50, payload.length())))
-                             .append(" (").append(String.format("%.2f%%", rate * 100)).append(")\n");
-                    }
-                    stats.append("\n");
-                }
-            }
-            
-            // Reflection tracker statistics
-            ParameterReflectionTracker reflectionTracker = EnhancedAggressive.getReflectionTracker();
-            if (reflectionTracker != null) {
-                Map<String, Object> reflectionStats = reflectionTracker.getStatistics();
-                stats.append("Parameter Reflection Tracker:\n");
-                stats.append("  Reflecting Parameters: ").append(reflectionStats.get("reflectingParameters")).append("\n");
-                stats.append("  Non-Reflecting Parameters: ").append(reflectionStats.get("nonReflectingParameters")).append("\n");
-                stats.append("  Total Tracked: ").append(reflectionStats.get("totalTrackedParameters")).append("\n");
-            }
-            
-            // Show in dialog
-            JTextArea textArea = new JTextArea(stats.toString());
-            textArea.setEditable(false);
-            textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
-            JScrollPane scrollPane = new JScrollPane(textArea);
-            scrollPane.setPreferredSize(new Dimension(600, 400));
-            
-            JOptionPane.showMessageDialog(panel, scrollPane, 
-                "XSSDetector Statistics", JOptionPane.INFORMATION_MESSAGE);
-            
-            callbacks.printOutput("[" + PLUGIN_NAME + "] Statistics displayed");
-            
-        } catch (Exception e) {
-            callbacks.printError("[" + PLUGIN_NAME + "] Error showing statistics: " + e.getMessage());
-        }
-    }
-    
+
     /**
      * Create content type management panel - FULLY WIRED TO SETTINGS
      */
@@ -995,10 +861,9 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 return issues;
             }
 
-            // Legacy CheckReflection passive reflected-XSS reporting is DISABLED
-            // (false positives, old verbose format). Reflected XSS is reported only
-            // by the ContextualReflectionEngine, which confirms a live break-out.
-            // This passive entry still runs the DOM / client-side detectors below.
+            // Reflected XSS is reported only by the ContextualReflectionEngine,
+            // which confirms a live break-out. This passive entry still runs the
+            // DOM / client-side detectors below.
             if (settings.getModernDetection() || settings.getDomXssDetection()) {
                 List<IScanIssue> comprehensiveIssues = performComprehensiveXSSDetection(baseRequestResponse);
                 if (comprehensiveIssues != null && !comprehensiveIssues.isEmpty()) {
@@ -1547,10 +1412,9 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 return issues;
             }
 
-            // Legacy CheckReflection passive reflected-XSS reporting is DISABLED
-            // (it produced false positives in the old verbose format). Reflected
-            // XSS is handled solely by the ContextualReflectionEngine, which runs
-            // its own passive feed + live confirmation from processHttpMessage.
+            // Reflected XSS is handled solely by the ContextualReflectionEngine,
+            // which runs its own passive feed + live confirmation from
+            // processHttpMessage.
 
             // DOM XSS detection for Proxy traffic - uses same validation as doPassiveScan
             // CRITICAL: Require payload reflection to avoid false positives
@@ -1961,13 +1825,6 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         confirmedVulnerabilities.clear();
         parameterTestHistory.clear();
 
-        // Clear static caches in EnhancedAggressive
-        try {
-            EnhancedAggressive.clearStaticCaches();
-        } catch (Exception e) {
-            // Ignore if method doesn't exist
-        }
-
         callbacks.printOutput("[" + PLUGIN_NAME + "] Extension unloaded successfully");
     }
 
@@ -2020,10 +1877,8 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 }
             }
             
-            // STEP 1: Basic reflection detection is now handled in doPassiveScan above
-            // Skip here to avoid duplicate detection
-            // CheckReflection.doPassiveScan is called directly in doPassiveScan method
-            
+            // STEP 1: Reflected XSS is reported only by the ContextualReflectionEngine.
+
             // STEP 2: DOM XSS detection (if enabled - client-side DOM manipulation)
             // CRITICAL: Skip DOM XSS detection for JavaScript files to prevent false positives
             if (settings.getDomXssDetection() && domXssDetector != null) {
@@ -2309,10 +2164,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 }
             }
 
-            // Legacy reflected-XSS detectors (EnhancedAggressive, EngineIntegration)
-            // are DISABLED: they produced false positives with weak payloads (e.g.
-            // "value"+"alert(1)") and verbose boilerplate reports. The
-            // ContextualReflectionEngine above is the single reflected-XSS
+            // The ContextualReflectionEngine above is the single reflected-XSS
             // authority -- it confirms a real break-out before reporting.
 
             // Step 3: AI Context Analyzer (if enabled)
@@ -2338,41 +2190,6 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                     }
                 } catch (Exception e) {
                     callbacks.printError("[" + PLUGIN_NAME + "] Error in AI context analysis: " + e.getMessage());
-                }
-            }
-
-            // Step 4: Advanced filtering to ensure true positives only
-            if (filteringEngine != null && !issues.isEmpty()) {
-                try {
-                    List<IScanIssue> filteredIssues = new ArrayList<>();
-                    for (IScanIssue issue : issues) {
-                        // Create reflection data map for filtering
-                        Map<String, Object> reflectionData = new HashMap<>();
-                        reflectionData.put("issueName", issue.getIssueName());
-                        reflectionData.put("severity", issue.getSeverity());
-                        reflectionData.put("confidence", issue.getConfidence());
-                        reflectionData.put("url", issue.getUrl() != null ? issue.getUrl().toString() : "");
-
-                        FilterResult filterResult =
-                            filteringEngine.analyzeReflection(reflectionData, requestResponse);
-
-                        if (filterResult != null && !filterResult.isFiltered()) {
-                            // Issue passes filtering - keep it
-                            filteredIssues.add(issue);
-                        } else if (filterResult != null && settings.getVerboseLogging()) {
-                            callbacks.printOutput("[" + PLUGIN_NAME + "] Issue filtered: " +
-                                filterResult.getReason() + " (confidence: " + filterResult.getConfidenceScore() + ")");
-                        }
-                    }
-                    // Replace issues with filtered list
-                    issues.clear();
-                    issues.addAll(filteredIssues);
-                    if (settings.getVerboseLogging()) {
-                        callbacks.printOutput("[" + PLUGIN_NAME + "] Filtering complete: " +
-                            filteredIssues.size() + " issues remain after filtering");
-                    }
-                } catch (Exception e) {
-                    callbacks.printError("[" + PLUGIN_NAME + "] Error in advanced filtering: " + e.getMessage());
                 }
             }
 

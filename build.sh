@@ -22,8 +22,9 @@ echo "-------- Building $JAR_NAME --------"
 # Prepare folders
 mkdir -p "$CLASS_DIR" "$DIST_DIR"
 
-# Clean previous output
-rm -f "$CLASS_DIR"/*.class
+# Clean previous output (recursively, so classes for deleted sources never linger)
+rm -rf "$CLASS_DIR"
+mkdir -p "$CLASS_DIR"
 rm -f "$DIST_DIR/$JAR_NAME"
 
 echo "[1/3] Compiling ..."
