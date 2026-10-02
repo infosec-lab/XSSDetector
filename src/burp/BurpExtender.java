@@ -942,7 +942,13 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             } else if (pt > 0) {
                 detail.append("No reflection detected in the tested parameter(s).");
             } else {
-                detail.append("No URL/body/cookie parameters to test on the selected request(s).");
+                detail.append("This request has no parameters to inject into\n")
+                      .append("(no query string, body, cookie or URL path segment).\n\n")
+                      .append("Pick a request that carries input - e.g. a URL with ?name=value\n")
+                      .append("such as /search.jsp?query=test or /index.jsp?content=... -\n")
+                      .append("or select a site-map folder/host to scan all its requests at once.\n")
+                      .append("Tip: just browse the target through the proxy; reflected inputs\n")
+                      .append("are auto-confirmed and appear in Live Results.");
             }
             if (!allNotes.isEmpty()) {
                 detail.append("\n\nPer-parameter:");
