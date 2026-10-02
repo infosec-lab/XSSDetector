@@ -71,6 +71,16 @@ public class EnhancedIssueReporter {
      */
     public IScanIssue createXSSIssue(IHttpRequestResponse requestResponse,
                                      Map<String, Object> vulnerabilityData) {
+        // DISABLED: this legacy reflected-XSS reporter produced false positives
+        // with weak payloads (e.g. "value"+"alert(1)") and the old verbose
+        // "Unfiltered Characters / Verification Summary" format. Reflected XSS is
+        // now reported exclusively by ContextualReflectionEngine, which confirms a
+        // real break-out with a working alert()/confirm()/prompt() payload.
+        return null;
+    }
+
+    private IScanIssue createXSSIssueDisabled(IHttpRequestResponse requestResponse,
+                                     Map<String, Object> vulnerabilityData) {
         try {
             if (requestResponse == null || vulnerabilityData == null) {
                 return null;

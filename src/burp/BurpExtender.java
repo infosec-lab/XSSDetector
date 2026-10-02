@@ -995,26 +995,11 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 return issues;
             }
 
-            // CRITICAL: Step 1 - Basic reflection detection (always enabled - foundation)
-            // This is the core reflection detection used on all passive traffic
-            if (checkReflection != null) {
-                try {
-                    List<IScanIssue> reflectionIssues = checkReflection.doPassiveScan(baseRequestResponse);
-                    if (reflectionIssues != null && !reflectionIssues.isEmpty()) {
-                        issues.addAll(reflectionIssues);
-                        callbacks.printOutput("[" + PLUGIN_NAME + "] CheckReflection found " + reflectionIssues.size() + " issues");
-                    }
-                } catch (Exception e) {
-                    callbacks.printError("[" + PLUGIN_NAME + "] Error in CheckReflection passive scan: " + e.getMessage());
-                    if (settings.getVerboseLogging()) {
-                        callbacks.printError("[" + PLUGIN_NAME + "] Stack trace: " + java.util.Arrays.toString(e.getStackTrace()));
-                    }
-                }
-            }
-            
-            // CRITICAL: Step 2 - Additional comprehensive XSS detection (if enabled)
-            // Only run if CheckReflection didn't find issues or if advanced features are enabled
-            if (issues.isEmpty() || settings.getModernDetection() || settings.getDomXssDetection()) {
+            // Legacy CheckReflection passive reflected-XSS reporting is DISABLED
+            // (false positives, old verbose format). Reflected XSS is reported only
+            // by the ContextualReflectionEngine, which confirms a live break-out.
+            // This passive entry still runs the DOM / client-side detectors below.
+            if (settings.getModernDetection() || settings.getDomXssDetection()) {
                 List<IScanIssue> comprehensiveIssues = performComprehensiveXSSDetection(baseRequestResponse);
                 if (comprehensiveIssues != null && !comprehensiveIssues.isEmpty()) {
                     issues.addAll(comprehensiveIssues);
@@ -1562,19 +1547,10 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 return issues;
             }
 
-            // Perform reflection detection (core functionality)
-            if (checkReflection != null) {
-                try {
-                    List<IScanIssue> reflectionIssues = checkReflection.doPassiveScan(messageInfo);
-                    if (reflectionIssues != null) {
-                        issues.addAll(reflectionIssues);
-                    }
-                } catch (Exception e) {
-                    if (settings != null && settings.getVerboseLogging()) {
-                        callbacks.printError("[" + PLUGIN_NAME + "] Error in real-time reflection check: " + e.getMessage());
-                    }
-                }
-            }
+            // Legacy CheckReflection passive reflected-XSS reporting is DISABLED
+            // (it produced false positives in the old verbose format). Reflected
+            // XSS is handled solely by the ContextualReflectionEngine, which runs
+            // its own passive feed + live confirmation from processHttpMessage.
 
             // DOM XSS detection for Proxy traffic - uses same validation as doPassiveScan
             // CRITICAL: Require payload reflection to avoid false positives
@@ -2333,30 +2309,12 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 }
             }
 
-            // Step 1: Aggressive detection (if enabled)
-            if (settings.getAggressiveMode() && aggressiveDetector != null) {
-                try {
-                    List<IScanIssue> aggressiveIssues = aggressiveDetector.doActiveScan(requestResponse, insertionPoint);
-                    if (aggressiveIssues != null) {
-                        issues.addAll(aggressiveIssues);
-                    }
-                } catch (Exception e) {
-                    callbacks.printError("[" + PLUGIN_NAME + "] Error in aggressive detection: " + e.getMessage());
-                }
-            }
-            
-            // Step 2: Engine integration manager (always enabled for comprehensive testing)
-            if (engineIntegrationManager != null) {
-                try {
-                    List<IScanIssue> engineIssues = engineIntegrationManager.performActiveScan(requestResponse, insertionPoint);
-                    if (engineIssues != null) {
-                        issues.addAll(engineIssues);
-                    }
-                } catch (Exception e) {
-                    callbacks.printError("[" + PLUGIN_NAME + "] Error in engine integration: " + e.getMessage());
-                }
-            }
-            
+            // Legacy reflected-XSS detectors (EnhancedAggressive, EngineIntegration)
+            // are DISABLED: they produced false positives with weak payloads (e.g.
+            // "value"+"alert(1)") and verbose boilerplate reports. The
+            // ContextualReflectionEngine above is the single reflected-XSS
+            // authority -- it confirms a real break-out before reporting.
+
             // Step 3: AI Context Analyzer (if enabled)
             if (settings.getCheckContext() && aiAnalyzer != null) {
                 try {
