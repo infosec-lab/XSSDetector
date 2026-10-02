@@ -1182,6 +1182,11 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             // Report to Burp
             callbacks.addScanIssue(issue);
 
+            // Also surface every reported XSS type in the Live Results view, so the
+            // full range of detections (reflected, DOM, postMessage, client-side,
+            // stored, template injection, ...) is visible in one place.
+            pushIssueToLiveResults(issue);
+
             callbacks.printOutput("[" + PLUGIN_NAME + "] Issue reported: " + issue.getIssueName());
             return true;
         } catch (Exception e) {
@@ -1191,6 +1196,67 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             }
             return false;
         }
+    }
+
+    /**
+     * Mirror any reported issue into the Live Results view. The contextual
+     * reflected-XSS engine already publishes its own richer finding (with
+     * request/response highlights), so those are skipped here to avoid
+     * duplicates; every other XSS type is added.
+     */
+    private void pushIssueToLiveResults(IScanIssue issue) {
+        try {
+            if (issue == null) {
+                return;
+            }
+            String name = issue.getIssueName() != null ? issue.getIssueName() : "Cross-Site Scripting";
+            if (name.equals("Cross-Site Scripting (Reflected)")) {
+                return; // already published by ContextualReflectionEngine with full evidence
+            }
+            String url = issue.getUrl() != null ? issue.getUrl().toString() : "";
+            String host = issue.getUrl() != null ? issue.getUrl().getHost() : "";
+
+            byte[] req = null;
+            byte[] resp = null;
+            String method = "";
+            IHttpRequestResponse[] msgs = issue.getHttpMessages();
+            if (msgs != null && msgs.length > 0 && msgs[0] != null) {
+                req = msgs[0].getRequest();
+                resp = msgs[0].getResponse();
+                try {
+                    method = helpers.analyzeRequest(msgs[0]).getMethod();
+                } catch (Exception ignored) {
+                    // method is best-effort
+                }
+            }
+
+            String param = extractParameterFromIssueName(name);
+            if (param == null || param.isEmpty()) {
+                param = extractParameterFromDetail(issue.getIssueDetail());
+            }
+            if (param == null) {
+                param = "";
+            }
+
+            XssFinding f = new XssFinding(
+                    normalizeSeverity(issue.getSeverity()), XssFinding.STATUS_CONFIRMED,
+                    name, param, method, host, url, "Scanner", "", req, resp);
+            FindingStore.get().add(f);
+        } catch (Exception ignored) {
+            // Live Results mirroring must never affect reporting
+        }
+    }
+
+    private String normalizeSeverity(String s) {
+        if (s == null) {
+            return "Medium";
+        }
+        String v = s.trim().toLowerCase();
+        if (v.startsWith("high")) return "High";
+        if (v.startsWith("med")) return "Medium";
+        if (v.startsWith("low")) return "Low";
+        if (v.startsWith("info")) return "Info";
+        return "Medium";
     }
 
     /**
@@ -1695,11 +1761,8 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 detail.append("</ol>\n\n");
             }
 
-            detail.append("<h4>Remediation</h4>\n");
-            detail.append("<p>").append(escapeHtml(vuln.remediation)).append("</p>\n");
-
-            // Build issue background based on vulnerability type
-            String background = getModernXSSBackground(vuln.type);
+            // No static remediation/background text: issues carry only live,
+            // dynamic evidence (description, code snippet, PoC, steps).
 
             return new IScanIssue() {
                 @Override
@@ -1731,16 +1794,16 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 public String getConfidence() { return burpConfidence; }
 
                 @Override
-                public String getIssueBackground() { return background; }
+                public String getIssueBackground() { return ""; }
 
                 @Override
-                public String getRemediationBackground() { return vuln.remediation; }
+                public String getRemediationBackground() { return ""; }
 
                 @Override
                 public String getIssueDetail() { return detail.toString(); }
 
                 @Override
-                public String getRemediationDetail() { return null; }
+                public String getRemediationDetail() { return ""; }
 
                 @Override
                 public IHttpRequestResponse[] getHttpMessages() {

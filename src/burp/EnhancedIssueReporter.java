@@ -2839,21 +2839,20 @@ public class EnhancedIssueReporter {
         public String getConfidence() { return confidence.getDisplayName(); }
         
         @Override
-        public String getIssueBackground() { return issueBackground; }
-        
+        // Static background/remediation intentionally suppressed: issues carry
+        // only live, dynamic evidence to stay consistent across all detectors.
+        public String getIssueBackground() { return ""; }
+
         @Override
-        public String getRemediationBackground() {
-            // Return empty to avoid duplication - remediation is already in getRemediationDetail()
-            return "";
-        }
-        
+        public String getRemediationBackground() { return ""; }
+
         @Override
-        public String getIssueDetail() { 
+        public String getIssueDetail() {
             return detail;
         }
-        
+
         @Override
-        public String getRemediationDetail() { return remediationDetail; }
+        public String getRemediationDetail() { return ""; }
         
         @Override
         public IHttpRequestResponse[] getHttpMessages() { return httpMessages; }
