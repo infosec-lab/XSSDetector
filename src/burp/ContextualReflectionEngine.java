@@ -97,7 +97,7 @@ public class ContextualReflectionEngine {
             }
 
             // STAGE 2 -- live confirmation. No issue without it.
-            Confirmation conf = confirm(injector, service, pr.best.poc);
+            Confirmation conf = confirm(injector, service, pr.best);
             if (conf == null || !conf.confirmed) {
                 if (settings != null && settings.getVerboseLogging()) {
                     callbacks.printOutput("[XSSDetector] Contextual: candidate not confirmed ("
@@ -248,7 +248,7 @@ public class ContextualReflectionEngine {
                     done++;
                     continue;
                 }
-                Confirmation conf = confirm(injector, service, pr.best.poc);
+                Confirmation conf = confirm(injector, service, pr.best);
                 if (conf != null && conf.confirmed) {
                     IScanIssue issue = buildDynamicIssue(name, insertionTypeName(type), source, pr.best, conf,
                             rr, pr);
@@ -403,7 +403,7 @@ public class ContextualReflectionEngine {
                     done++;
                     continue;
                 }
-                Confirmation conf = confirm(injector, service, pr.best.poc);
+                Confirmation conf = confirm(injector, service, pr.best);
                 if (conf != null && conf.confirmed) {
                     IScanIssue issue = buildDynamicIssue(name, insertionTypeName(type), source, pr.best, conf, rr, pr);
                     if (issue != null) {
@@ -1066,40 +1066,104 @@ public class ContextualReflectionEngine {
     // Stage 2: live confirmation of the proof-of-concept
     // ------------------------------------------------------------------
 
-    private Confirmation confirm(Injector injector, IHttpService service, String poc) {
+    /**
+     * Stage 2: try a series of context-specific payload variants (encoding /
+     * keyword / tag / alert-prompt-confirm bypasses) until one is reflected
+     * verbatim and unescaped. Records every attempt (for the Edited 1,2,3...
+     * request/response views) and reports the winning exploit payload.
+     */
+    private Confirmation confirm(Injector injector, IHttpService service, Finding f) {
+        Confirmation conf = new Confirmation();
         try {
-            String lm = randomCanary();
-            String rm = randomCanary();
-            String value = lm + poc + rm;
-            byte[] request = injector.build(value);
-            IHttpRequestResponse rr = callbacks.makeHttpRequest(service, request);
-            if (rr == null || rr.getResponse() == null) {
-                return null;
+            List<String> variants = pocVariants(f);
+            int tried = 0;
+            for (String poc : variants) {
+                if (tried >= 6) {
+                    break; // bound the number of live requests
+                }
+                tried++;
+                String lm = randomCanary();
+                String rm = randomCanary();
+                String value = lm + poc + rm;
+                IHttpRequestResponse rr;
+                try {
+                    rr = callbacks.makeHttpRequest(service, injector.build(value));
+                } catch (Exception e) {
+                    continue;
+                }
+                if (rr == null || rr.getResponse() == null) {
+                    continue;
+                }
+                byte[] respBytes = rr.getResponse();
+                IResponseInfo info = helpers.analyzeResponse(respBytes);
+                int off = info.getBodyOffset();
+                String bodyStr = new String(Arrays.copyOfRange(respBytes, off, respBytes.length), StandardCharsets.UTF_8);
+                int l = bodyStr.indexOf(lm);
+                boolean ok = false;
+                if (l >= 0) {
+                    int segStart = l + lm.length();
+                    int r = bodyStr.indexOf(rm, segStart);
+                    String segment = (r > segStart) ? bodyStr.substring(segStart, r)
+                            : bodyStr.substring(segStart, Math.min(bodyStr.length(), segStart + poc.length() + 8));
+                    ok = containsUnescaped(segment, poc);
+                }
+                conf.attempts.add(new Attempt("Edited " + (conf.attempts.size() + 1)
+                        + (ok ? " - PoC (confirmed)" : " - variant"), poc, value, rr, ok));
+                if (ok) {
+                    conf.requestResponse = rr;
+                    conf.injectedValue = value;
+                    conf.poc = poc;
+                    conf.confirmed = true;
+                    conf.snippet = buildSnippet(bodyStr, Math.max(0, l - 24),
+                            poc.length() + lm.length() + rm.length() + 48);
+                    return conf;
+                }
             }
-            byte[] respBytes = rr.getResponse();
-            IResponseInfo info = helpers.analyzeResponse(respBytes);
-            int off = info.getBodyOffset();
-            String bodyStr = new String(Arrays.copyOfRange(respBytes, off, respBytes.length), StandardCharsets.UTF_8);
-
-            int l = bodyStr.indexOf(lm);
-            if (l < 0) {
-                return null; // our value not reflected
-            }
-            int segStart = l + lm.length();
-            int r = bodyStr.indexOf(rm, segStart);
-            String segment = (r > segStart) ? bodyStr.substring(segStart, r) : bodyStr.substring(segStart,
-                    Math.min(bodyStr.length(), segStart + poc.length() + 8));
-
-            Confirmation conf = new Confirmation();
-            conf.requestResponse = rr;
-            conf.injectedValue = value;
-            conf.confirmed = containsUnescaped(segment, poc);
-            if (conf.confirmed) {
-                conf.snippet = buildSnippet(bodyStr, Math.max(0, l - 24), poc.length() + lm.length() + rm.length() + 48);
-            }
-            return conf;
         } catch (Exception e) {
-            return null;
+            if (settings != null && settings.getVerboseLogging()) {
+                callbacks.printError("[XSSDetector] confirm: " + e.getMessage());
+            }
+        }
+        return conf; // conf.confirmed == false
+    }
+
+    /**
+     * Ordered exploit-payload variants for a context: the primary PoC first, then
+     * filter/encoding/keyword bypasses (svg vs img, case mixing, slash tricks)
+     * and the alert / confirm / prompt function alternatives.
+     */
+    private List<String> pocVariants(Finding f) {
+        List<String> out = new ArrayList<>();
+        String base = f.poc;
+        out.add(base);
+
+        int lt = base.indexOf('<');
+        if (lt >= 0 && base.indexOf('>', lt) > lt) {
+            // Tag-injection payload: keep the break-out prefix, swap the tag body.
+            String prefix = base.substring(0, lt);
+            String[] tags = {
+                "<img src=x onerror=alert(document.domain)>",
+                "<svg onload=alert(document.domain)>",
+                "<img src=x onerror=confirm(1)>",
+                "<img src=x onerror=prompt(1)>",
+                "<img src=x OnErRoR=alert(1)>",      // case-mixing WAF bypass
+                "<svg/onload=alert(1)>"              // slash separator bypass
+            };
+            for (String t : tags) {
+                add(out, prefix + t);
+            }
+        } else {
+            // JS / attribute / URL payload: vary the sink function only.
+            add(out, base.replace("alert(1)", "alert(document.domain)"));
+            add(out, base.replace("alert(1)", "confirm(1)"));
+            add(out, base.replace("alert(1)", "prompt(1)"));
+        }
+        return out;
+    }
+
+    private void add(List<String> list, String s) {
+        if (s != null && !s.isEmpty() && !list.contains(s)) {
+            list.add(s);
         }
     }
 
@@ -1136,6 +1200,12 @@ public class ContextualReflectionEngine {
             IHttpRequestResponse evidence = conf.requestResponse;
             URL url = helpers.analyzeRequest(evidence).getUrl();
 
+            // Use the exploit payload that actually confirmed (a bypass variant may
+            // have been needed), so the report/markers reflect what really works.
+            if (conf.poc != null && !conf.poc.isEmpty()) {
+                f.poc = conf.poc;
+            }
+
             // Markers over the live request value and the reflected payload.
             List<int[]> reqMarkers = markers(evidence.getRequest(), conf.injectedValue);
             List<int[]> respMarkers = markers(evidence.getResponse(), f.poc);
@@ -1169,17 +1239,27 @@ public class ContextualReflectionEngine {
                     xf.port = svc.getPort();
                     xf.https = "https".equalsIgnoreCase(svc.getProtocol());
                 }
-                // Original request/response + the edited probe & PoC messages, each
-                // with its own marker, like Burp's request/response viewer.
+                // Original request/response + the probe + every edited attempt
+                // (Edited 1, 2, 3 ...), each with its own marker, like Burp's viewer.
                 if (baseRR != null && baseRR.getRequest() != null) {
                     xf.messages.add(new XssFinding.Msg("Original", baseRR.getRequest(), baseRR.getResponse(), null, null));
                 }
                 if (pr != null && pr.probeRR != null) {
-                    xf.messages.add(new XssFinding.Msg("Edited 1 - probe", pr.probeRR.getRequest(),
+                    xf.messages.add(new XssFinding.Msg("Probe (break-out test)", pr.probeRR.getRequest(),
                             pr.probeRR.getResponse(), pr.tag, pr.tag));
                 }
-                xf.messages.add(new XssFinding.Msg("Edited 2 - PoC", evidence.getRequest(),
-                        evidence.getResponse(), conf.injectedValue, f.poc));
+                if (!conf.attempts.isEmpty()) {
+                    for (Attempt a : conf.attempts) {
+                        if (a.rr == null) {
+                            continue;
+                        }
+                        xf.messages.add(new XssFinding.Msg(a.label, a.rr.getRequest(), a.rr.getResponse(),
+                                a.injectedValue, a.poc));
+                    }
+                } else {
+                    xf.messages.add(new XssFinding.Msg("Edited - PoC", evidence.getRequest(),
+                            evidence.getResponse(), conf.injectedValue, f.poc));
+                }
                 FindingStore.get().add(xf);
             } catch (Exception ignored) {
                 // never let reporting-side wiring break issue creation
@@ -1490,10 +1570,28 @@ public class ContextualReflectionEngine {
     }
 
     private static final class Confirmation {
-        IHttpRequestResponse requestResponse;
-        String injectedValue;
+        IHttpRequestResponse requestResponse; // the request/response that confirmed
+        String injectedValue;                 // full injected value (markers + poc)
+        String poc;                           // the winning exploit payload
         boolean confirmed;
         String snippet;
+        final List<Attempt> attempts = new ArrayList<>(); // every variant tried
+    }
+
+    /** One confirmation attempt (a payload variant) and its live request/response. */
+    private static final class Attempt {
+        final String label;
+        final String poc;
+        final String injectedValue;
+        final IHttpRequestResponse rr;
+        final boolean confirmed;
+        Attempt(String label, String poc, String injectedValue, IHttpRequestResponse rr, boolean confirmed) {
+            this.label = label;
+            this.poc = poc;
+            this.injectedValue = injectedValue;
+            this.rr = rr;
+            this.confirmed = confirmed;
+        }
     }
 
     /**
