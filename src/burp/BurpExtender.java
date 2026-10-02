@@ -379,10 +379,10 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         scopeOnly = new JCheckBox("Scan in-scope targets only", settings.getScopeOnly());
         aggressiveMode = new JCheckBox("Aggressive mode (extra bypass probes)", settings.getAggressiveMode());
         autoConfirm = new JCheckBox("Live confirm while browsing (sends probes, on by default)", settings.getAutoConfirm());
-        autoConfirm.setToolTipText("On by default. Reflected parameters on IN-SCOPE targets seen in proxied "
-                + "traffic are automatically probe-and-confirmed, so reflected XSS is reported as Confirmed in "
-                + "realtime without a manual scan. For safety it only injects into targets in Burp's scope, so set "
-                + "your target scope. (Right-click -> Active XSS scan works regardless of scope.)");
+        autoConfirm.setToolTipText("On by default. Reflected parameters seen in proxied traffic are automatically "
+                + "probe-and-confirmed, so reflected XSS is reported as Confirmed in realtime just by browsing - no "
+                + "manual scan and no Burp scope setup required. Enable 'Scan in-scope targets only' above to restrict "
+                + "this auto-confirmation to targets in Burp's scope. (Right-click -> Active XSS scan always works too.)");
         checkContext = new JCheckBox("Contextual reflection engine  (context-aware, incl. JSON/JSONP)", settings.getCheckContext());
 
         modernDetection = new JCheckBox("Modern framework detection", settings.getModernDetection());
@@ -1405,16 +1405,22 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                     // Realtime: actively probe-and-confirm reflected parameters on
                     // browsed traffic so genuine reflected XSS is reported as
                     // Confirmed without a manual active scan (on by default).
-                    // SAFETY: auto-injection only hits IN-SCOPE targets, so browsing
-                    // arbitrary sites never triggers unsolicited attack traffic.
+                    // Scope policy follows the "Scan in-scope only" setting:
+                    //   - OFF (default): auto-confirm every parameter you browse, so
+                    //     reflected XSS is confirmed just by visiting the page. This
+                    //     is why Burp's Target > Scope no longer has to be configured.
+                    //   - ON: auto-confirm is restricted to in-scope targets only, so
+                    //     browsing arbitrary sites sends no probe traffic.
                     // Never on Scanner traffic (the active scanner covers that path).
-                    boolean inScope = false;
-                    try {
-                        inScope = callbacks.isInScope(helpers.analyzeRequest(messageInfo).getUrl());
-                    } catch (Exception ignored) {
-                        inScope = false;
+                    boolean scopeOk = true;
+                    if (settings.getScopeOnly()) {
+                        try {
+                            scopeOk = callbacks.isInScope(helpers.analyzeRequest(messageInfo).getUrl());
+                        } catch (Exception ignored) {
+                            scopeOk = false;
+                        }
                     }
-                    if (settings.getAutoConfirm() && inScope && toolFlag != IBurpExtenderCallbacks.TOOL_SCANNER) {
+                    if (settings.getAutoConfirm() && scopeOk && toolFlag != IBurpExtenderCallbacks.TOOL_SCANNER) {
                         List<IScanIssue> liveIssues = contextualEngine.liveConfirm(messageInfo, toolName);
                         if (liveIssues != null) {
                             for (IScanIssue li : liveIssues) {
