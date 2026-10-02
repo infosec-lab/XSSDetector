@@ -31,6 +31,26 @@ public final class XssFinding {
     public int port;
     public boolean https;
 
+    /** One request/response pair shown in the viewer (Original, Edited 1, ...). */
+    public static final class Msg {
+        public final String label;
+        public final byte[] request;
+        public final byte[] response;
+        public final String reqHighlight;
+        public final String respHighlight;
+
+        public Msg(String label, byte[] request, byte[] response, String reqHighlight, String respHighlight) {
+            this.label = label;
+            this.request = request;
+            this.response = response;
+            this.reqHighlight = reqHighlight;
+            this.respHighlight = respHighlight;
+        }
+    }
+
+    /** Ordered message pairs for the viewer: Original first, then each Edited probe/PoC. */
+    public final java.util.List<Msg> messages = new java.util.ArrayList<>();
+
     public XssFinding(String severity, String status, String context, String parameter,
                       String method, String host, String url, String source, String poc,
                       byte[] request, byte[] response) {

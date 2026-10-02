@@ -6,6 +6,7 @@ import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
 import java.awt.*;
+import java.awt.event.ActionListener;
 import java.io.FileWriter;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
@@ -31,6 +32,8 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
     private final JLabel pocBar = new JLabel(" ");
     private final MessageEditor reqEditor = new MessageEditor("Request");
     private final MessageEditor respEditor = new MessageEditor("Response");
+    private final JComboBox<String> msgSelect = new JComboBox<>();
+    private java.util.List<XssFinding.Msg> currentMsgs = new ArrayList<>();
 
     private final JTextField search = new JTextField(14);
     private final JCheckBox fHigh = new JCheckBox("High", true);
@@ -87,10 +90,25 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         lr.setResizeWeight(0.5);
         lr.setBorder(null);
 
+        // Top bar: PoC line + a selector to switch Original / Edited 1 / Edited 2 ...
+        JPanel top = new JPanel(new BorderLayout(8, 0));
+        top.add(pocBar, BorderLayout.CENTER);
+        JPanel sel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        sel.add(new JLabel("Message:"));
+        msgSelect.setPrototypeDisplayValue("Edited 2 - PoC");
+        msgSelect.addActionListener(e -> {
+            int i = msgSelect.getSelectedIndex();
+            if (i >= 0 && i < currentMsgs.size()) {
+                loadMessage(currentMsgs.get(i));
+            }
+        });
+        sel.add(msgSelect);
+        top.add(sel, BorderLayout.EAST);
+
         JPanel viewerPanel = new JPanel(new BorderLayout());
         viewerPanel.setBorder(BorderFactory.createTitledBorder(
-                "Selected finding - payload highlighted; search each pane, jump between matches"));
-        viewerPanel.add(pocBar, BorderLayout.NORTH);
+                "Selected finding - Original + Edited request/response; payload highlighted; search each pane"));
+        viewerPanel.add(top, BorderLayout.NORTH);
         viewerPanel.add(lr, BorderLayout.CENTER);
 
         JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, tableScroll, viewerPanel);
@@ -293,14 +311,32 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         int row = table.getSelectedRow();
         XssFinding f = model.getRow(row);
         if (f == null) {
+            currentMsgs = new ArrayList<>();
+            msgSelect.removeAllItems();
             reqEditor.setMessage(null, null);
             respEditor.setMessage(null, null);
             pocBar.setText(" ");
             return;
         }
-        // Load request (left) / response (right) and auto-navigate to the payload.
-        reqEditor.setMessage(f.request, f.reqHighlight);
-        respEditor.setMessage(f.response, f.respHighlight);
+
+        // Build the message list (Original + Edited N); fall back to the single pair.
+        currentMsgs = new ArrayList<>();
+        if (f.messages != null && !f.messages.isEmpty()) {
+            currentMsgs.addAll(f.messages);
+        } else {
+            currentMsgs.add(new XssFinding.Msg("Request / Response", f.request, f.response,
+                    f.reqHighlight, f.respHighlight));
+        }
+        // Populate selector without firing the listener repeatedly.
+        ActionListener[] ls = msgSelect.getActionListeners();
+        for (ActionListener l : ls) msgSelect.removeActionListener(l);
+        msgSelect.removeAllItems();
+        for (XssFinding.Msg m : currentMsgs) msgSelect.addItem(m.label);
+        for (ActionListener l : ls) msgSelect.addActionListener(l);
+        // Default to the PoC (last message) so the proof is shown first.
+        int def = currentMsgs.size() - 1;
+        msgSelect.setSelectedIndex(def);
+        loadMessage(currentMsgs.get(def));
 
         boolean confirmed = XssFinding.STATUS_CONFIRMED.equals(f.status);
         String label = confirmed
@@ -314,6 +350,17 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
     private static String esc(String s) {
         if (s == null) return "";
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    /** Load one request/response pair into the side-by-side editors with markers. */
+    private void loadMessage(XssFinding.Msg m) {
+        if (m == null) {
+            reqEditor.setMessage(null, null);
+            respEditor.setMessage(null, null);
+            return;
+        }
+        reqEditor.setMessage(m.request, m.reqHighlight);
+        respEditor.setMessage(m.response, m.respHighlight);
     }
 
     private void exportCsv() {

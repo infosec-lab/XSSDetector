@@ -28,11 +28,21 @@ The table fills in real time from two sources:
 Columns: Time · Severity · Status · Context · Parameter · URL · Source.
 
 Pick a row to see it in a Burp-style viewer: **Request on the left, Response on
-the right**. The injected value is highlighted in the request and the reflected
-payload in the response, and each pane scrolls to that spot automatically. Each
-pane has its own **Search** box with **▲/▼** to jump between matches. A PoC bar
-shows the parameter, context and exploit payload. Right-click a row for **Send
-request to Repeater**, **Copy URL**, or **Copy PoC**.
+the right**. A **Message** selector switches between the **Original** request/
+response and each **Edited** probe/PoC (Edited 1 - probe, Edited 2 - PoC, …). The
+injected value is highlighted in the request and the reflected payload in the
+response, and each pane scrolls to that spot automatically. Each pane has its own
+**Search** box with **▲/▼** to jump between matches. A PoC bar shows the
+parameter, context and exploit payload. Right-click a row for **Send request to
+Repeater**, **Copy URL**, or **Copy PoC**.
+
+## Scanning from the right-click menu
+
+Right-click any request in Burp (Proxy history, Target, Repeater, …) →
+**Active XSS scan (XSSDetector)**. This probe-and-confirms every parameter of
+that request and reports confirmed XSS to the **Issues** tab and **Live Results**.
+It works in **any Burp edition** (it sends its own requests and does not depend on
+the Pro active scanner).
 
 Reflections seen on error pages (HTTP 4xx/5xx) and plain navigation values
 (filenames, paths, URLs) are filtered out, so the list stays signal, not noise.

@@ -18,7 +18,7 @@ import static burp.Constants.*;
  * XSSDetector - Professional XSS Vulnerability Scanner for Burp Suite
  * Clean, production-ready implementation with essential XSS detection capabilities
  */
-public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpListener, IExtensionStateListener {
+public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpListener, IExtensionStateListener, IContextMenuFactory {
     
     // Plugin Information
     public static final String PLUGIN_NAME = "XSSDetector";
@@ -156,6 +156,9 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
 
         // Register extension state listener for cleanup on unload
         callbacks.registerExtensionStateListener(this);
+
+        // Register right-click "Active XSS scan" menu (works in any Burp edition)
+        callbacks.registerContextMenuFactory(this);
 
         // Initialize thread management
         initializeThreadManagement();
@@ -1040,6 +1043,61 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         }
 
         return issues;
+    }
+
+    @Override
+    public List<JMenuItem> createMenuItems(IContextMenuInvocation invocation) {
+        List<JMenuItem> items = new ArrayList<>();
+        try {
+            final IHttpRequestResponse[] selected = invocation != null ? invocation.getSelectedMessages() : null;
+            if (selected == null || selected.length == 0) {
+                return items;
+            }
+            JMenuItem scan = new JMenuItem("Active XSS scan (XSSDetector)");
+            scan.addActionListener(e -> scanningExecutor.submit(() -> runMenuScan(selected)));
+            items.add(scan);
+        } catch (Exception ex) {
+            callbacks.printError("[" + PLUGIN_NAME + "] context menu error: " + ex.getMessage());
+        }
+        return items;
+    }
+
+    /** Run the contextual engine over the selected requests and report findings.
+     *  Works without Burp Pro's scanner (it sends its own probe/confirm requests). */
+    private void runMenuScan(IHttpRequestResponse[] selected) {
+        int confirmed = 0;
+        int scanned = 0;
+        try {
+            if (contextualEngine == null) {
+                return;
+            }
+            for (IHttpRequestResponse rr : selected) {
+                if (rr == null || rr.getRequest() == null) {
+                    continue;
+                }
+                scanned++;
+                List<IScanIssue> issues = contextualEngine.scanRequest(rr, "Menu scan");
+                if (issues != null) {
+                    for (IScanIssue issue : issues) {
+                        if (reportIssueWithDedup(issue)) {
+                            confirmed++;
+                        }
+                    }
+                }
+            }
+            final int c = confirmed;
+            final int s = scanned;
+            callbacks.printOutput("[" + PLUGIN_NAME + "] Active XSS scan: " + s + " request(s) scanned, "
+                    + c + " confirmed issue(s) reported.");
+            SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(panel,
+                    "Active XSS scan complete.\n\nRequests scanned: " + s
+                    + "\nConfirmed XSS reported: " + c
+                    + (c > 0 ? "\n\nSee the Issues tab and the Live Results tab."
+                             : "\n\nNo reflected XSS confirmed on the selected request(s)."),
+                    "XSSDetector", JOptionPane.INFORMATION_MESSAGE));
+        } catch (Exception e) {
+            callbacks.printError("[" + PLUGIN_NAME + "] Menu scan error: " + e.getMessage());
+        }
     }
 
     @Override

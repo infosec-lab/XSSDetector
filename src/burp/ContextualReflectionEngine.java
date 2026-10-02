@@ -107,7 +107,8 @@ public class ContextualReflectionEngine {
             }
 
             IScanIssue issue = buildDynamicIssue(insertionPoint.getInsertionPointName(),
-                    insertionTypeName(insertionPoint.getInsertionPointType()), "Scanner", pr.best, conf);
+                    insertionTypeName(insertionPoint.getInsertionPointType()), "Scanner", pr.best, conf,
+                    baseRequestResponse, pr);
             if (issue != null) {
                 issues.add(issue);
                 if (settings != null && settings.getVerboseLogging()) {
@@ -131,6 +132,7 @@ public class ContextualReflectionEngine {
     private static final class ProbeResult {
         IHttpRequestResponse probeRR;
         Finding best;
+        String tag;
     }
 
     /** Stage 1: send the measurement probe and pick the most exploitable reflection site. */
@@ -165,6 +167,7 @@ public class ContextualReflectionEngine {
             ProbeResult pr = new ProbeResult();
             pr.probeRR = probeRR;
             pr.best = best;
+            pr.tag = tag;
             return pr;
         } catch (Exception e) {
             return null;
@@ -247,7 +250,8 @@ public class ContextualReflectionEngine {
                 }
                 Confirmation conf = confirm(injector, service, pr.best.poc);
                 if (conf != null && conf.confirmed) {
-                    IScanIssue issue = buildDynamicIssue(name, insertionTypeName(type), source, pr.best, conf);
+                    IScanIssue issue = buildDynamicIssue(name, insertionTypeName(type), source, pr.best, conf,
+                            rr, pr);
                     if (issue != null) {
                         found.add(issue); // reported by the caller through central de-dup
                         callbacks.printOutput("[XSSDetector] Live-confirmed reflected XSS: param '" + name
@@ -361,6 +365,59 @@ public class ContextualReflectionEngine {
                 callbacks.printError("[ContextualReflectionEngine] passive: " + e.getMessage());
             }
         }
+    }
+
+    /**
+     * Explicit active scan of one request (e.g. from the right-click menu). Unlike
+     * the browse-time feed this probes EVERY URL/body/cookie parameter regardless
+     * of whether its current value is already reflected, and ignores the
+     * once-per-session guard, so "Active XSS scan" always does a full pass.
+     * Works in any Burp edition (it sends its own requests, independent of the
+     * Pro scanner). Returns confirmed issues for the caller to report.
+     */
+    public List<IScanIssue> scanRequest(IHttpRequestResponse rr, String source) {
+        List<IScanIssue> found = new ArrayList<>();
+        try {
+            if (rr == null || rr.getRequest() == null) {
+                return found;
+            }
+            final IHttpService service = rr.getHttpService();
+            final byte[] baseRequest = rr.getRequest();
+            IRequestInfo reqInfo = helpers.analyzeRequest(rr);
+
+            int done = 0;
+            for (IParameter p : reqInfo.getParameters()) {
+                if (done >= 40) {
+                    break;
+                }
+                final byte type = p.getType();
+                if (type != IParameter.PARAM_URL && type != IParameter.PARAM_BODY && type != IParameter.PARAM_COOKIE) {
+                    continue;
+                }
+                final String name = p.getName();
+                Injector injector = v -> helpers.updateParameter(baseRequest,
+                        helpers.buildParameter(name, helpers.urlEncode(v), type));
+
+                ProbeResult pr = probe(injector, service);
+                if (pr == null || pr.best == null) {
+                    done++;
+                    continue;
+                }
+                Confirmation conf = confirm(injector, service, pr.best.poc);
+                if (conf != null && conf.confirmed) {
+                    IScanIssue issue = buildDynamicIssue(name, insertionTypeName(type), source, pr.best, conf, rr, pr);
+                    if (issue != null) {
+                        found.add(issue);
+                    }
+                }
+                done++;
+            }
+        } catch (Exception e) {
+            if (settings != null && settings.getVerboseLogging()) {
+                callbacks.printError("[XSSDetector] scanRequest: " + e.getMessage());
+            }
+        }
+        return found;
     }
 
     /** Lightweight JSON/JSONP context label for the realtime passive feed. */
@@ -1073,7 +1130,8 @@ public class ContextualReflectionEngine {
     // ------------------------------------------------------------------
 
     private IScanIssue buildDynamicIssue(String param, String insType, String source,
-                                         Finding f, Confirmation conf) {
+                                         Finding f, Confirmation conf,
+                                         IHttpRequestResponse baseRR, ProbeResult pr) {
         try {
             IHttpRequestResponse evidence = conf.requestResponse;
             URL url = helpers.analyzeRequest(evidence).getUrl();
@@ -1111,6 +1169,17 @@ public class ContextualReflectionEngine {
                     xf.port = svc.getPort();
                     xf.https = "https".equalsIgnoreCase(svc.getProtocol());
                 }
+                // Original request/response + the edited probe & PoC messages, each
+                // with its own marker, like Burp's request/response viewer.
+                if (baseRR != null && baseRR.getRequest() != null) {
+                    xf.messages.add(new XssFinding.Msg("Original", baseRR.getRequest(), baseRR.getResponse(), null, null));
+                }
+                if (pr != null && pr.probeRR != null) {
+                    xf.messages.add(new XssFinding.Msg("Edited 1 - probe", pr.probeRR.getRequest(),
+                            pr.probeRR.getResponse(), pr.tag, pr.tag));
+                }
+                xf.messages.add(new XssFinding.Msg("Edited 2 - PoC", evidence.getRequest(),
+                        evidence.getResponse(), conf.injectedValue, f.poc));
                 FindingStore.get().add(xf);
             } catch (Exception ignored) {
                 // never let reporting-side wiring break issue creation
