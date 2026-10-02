@@ -6,7 +6,6 @@ import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
 import java.awt.*;
-import java.awt.event.ActionListener;
 import java.io.FileWriter;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
@@ -30,10 +29,14 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
     private final JTable table = new JTable(model);
 
     private final JLabel pocBar = new JLabel(" ");
-    private final MessageEditor reqEditor = new MessageEditor("Request");
-    private final MessageEditor respEditor = new MessageEditor("Response");
-    private final JComboBox<String> msgSelect = new JComboBox<>();
+    // Burp-style per-pane header dropdowns: "Original request / Edited request 1,2,3..."
+    // on the left and the matching "Original response / Edited response N" on the right.
+    private final JComboBox<String> reqHeader = new JComboBox<>();
+    private final JComboBox<String> respHeader = new JComboBox<>();
+    private final MessageEditor reqEditor = new MessageEditor(reqHeader);
+    private final MessageEditor respEditor = new MessageEditor(respHeader);
     private java.util.List<XssFinding.Msg> currentMsgs = new ArrayList<>();
+    private boolean syncing = false;
 
     private final JTextField search = new JTextField(14);
     private final JCheckBox fHigh = new JCheckBox("High", true);
@@ -87,30 +90,25 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         pocBar.setBorder(BorderFactory.createEmptyBorder(2, 4, 4, 4));
         pocBar.setFont(pocBar.getFont().deriveFont(Font.PLAIN));
 
-        // Burp-style layout: Request on the left, Response on the right.
+        // Burp-style layout: Request on the left, Response on the right. Each pane
+        // carries its own dropdown header (Original / Edited 1,2,3 ...); the two
+        // headers stay synchronized so request and response always match.
+        reqHeader.setPrototypeDisplayValue("Edited request 2 - PoC (confirmed)");
+        respHeader.setPrototypeDisplayValue("Edited response 2 - PoC (confirmed)");
+        reqHeader.addActionListener(e -> selectVariant(reqHeader.getSelectedIndex()));
+        respHeader.addActionListener(e -> selectVariant(respHeader.getSelectedIndex()));
+
         JSplitPane lr = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, reqEditor, respEditor);
         lr.setResizeWeight(0.5);
         lr.setBorder(null);
 
-        // Top bar: PoC line + a selector to switch Original / Edited 1 / Edited 2 ...
-        JPanel top = new JPanel(new BorderLayout(8, 0));
-        top.add(pocBar, BorderLayout.CENTER);
-        JPanel sel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
-        sel.add(new JLabel("Message:"));
-        msgSelect.setPrototypeDisplayValue("Edited 2 - PoC");
-        msgSelect.addActionListener(e -> {
-            int i = msgSelect.getSelectedIndex();
-            if (i >= 0 && i < currentMsgs.size()) {
-                loadMessage(currentMsgs.get(i));
-            }
-        });
-        sel.add(msgSelect);
-        top.add(sel, BorderLayout.EAST);
+        // Top bar: the PoC / confirmation line for the selected finding.
+        pocBar.setBorder(BorderFactory.createEmptyBorder(2, 6, 4, 6));
 
         JPanel viewerPanel = new JPanel(new BorderLayout());
         viewerPanel.setBorder(BorderFactory.createTitledBorder(
-                "Selected finding - Original + Edited request/response; payload highlighted; search each pane"));
-        viewerPanel.add(top, BorderLayout.NORTH);
+                "Selected finding - Original + Edited request/response; injected payload highlighted; search each pane"));
+        viewerPanel.add(pocBar, BorderLayout.NORTH);
         viewerPanel.add(lr, BorderLayout.CENTER);
 
         JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, tableScroll, viewerPanel);
@@ -314,7 +312,10 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         XssFinding f = model.getRow(row);
         if (f == null) {
             currentMsgs = new ArrayList<>();
-            msgSelect.removeAllItems();
+            syncing = true;
+            reqHeader.removeAllItems();
+            respHeader.removeAllItems();
+            syncing = false;
             reqEditor.setMessage(null, null);
             respEditor.setMessage(null, null);
             pocBar.setText(" ");
@@ -326,19 +327,30 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         if (f.messages != null && !f.messages.isEmpty()) {
             currentMsgs.addAll(f.messages);
         } else {
-            currentMsgs.add(new XssFinding.Msg("Request / Response", f.request, f.response,
+            currentMsgs.add(new XssFinding.Msg("Original", f.request, f.response,
                     f.reqHighlight, f.respHighlight));
         }
-        // Populate selector without firing the listener repeatedly.
-        ActionListener[] ls = msgSelect.getActionListeners();
-        for (ActionListener l : ls) msgSelect.removeActionListener(l);
-        msgSelect.removeAllItems();
-        for (XssFinding.Msg m : currentMsgs) msgSelect.addItem(m.label);
-        for (ActionListener l : ls) msgSelect.addActionListener(l);
+        // Populate both pane dropdowns with Burp-style labels, without firing listeners.
+        syncing = true;
+        reqHeader.removeAllItems();
+        respHeader.removeAllItems();
+        int edited = 0;
+        for (int i = 0; i < currentMsgs.size(); i++) {
+            XssFinding.Msg m = currentMsgs.get(i);
+            if (i == 0 && isOriginal(m.label)) {
+                reqHeader.addItem("Original request");
+                respHeader.addItem("Original response");
+            } else {
+                edited++;
+                String d = variantDesc(m.label);
+                reqHeader.addItem("Edited request " + edited + d);
+                respHeader.addItem("Edited response " + edited + d);
+            }
+        }
+        syncing = false;
         // Default to the PoC (last message) so the proof is shown first.
         int def = currentMsgs.size() - 1;
-        msgSelect.setSelectedIndex(def);
-        loadMessage(currentMsgs.get(def));
+        selectVariant(def);
 
         boolean confirmed = XssFinding.STATUS_CONFIRMED.equals(f.status);
         String label = confirmed
@@ -354,6 +366,40 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
     private static String esc(String s) {
         if (s == null) return "";
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    /** Select the same variant in both pane dropdowns and load it into the editors. */
+    private void selectVariant(int i) {
+        if (syncing) {
+            return;
+        }
+        if (i < 0 || i >= currentMsgs.size()) {
+            return;
+        }
+        syncing = true;
+        if (reqHeader.getItemCount() > i) reqHeader.setSelectedIndex(i);
+        if (respHeader.getItemCount() > i) respHeader.setSelectedIndex(i);
+        syncing = false;
+        loadMessage(currentMsgs.get(i));
+    }
+
+    private static boolean isOriginal(String label) {
+        return label != null && label.toLowerCase().startsWith("original");
+    }
+
+    /** Short descriptor appended to an Edited label (" - break-out test", " - PoC"). */
+    private static String variantDesc(String label) {
+        if (label == null) {
+            return "";
+        }
+        if (label.toLowerCase().startsWith("probe")) {
+            return " - break-out test";
+        }
+        int dash = label.indexOf(" - ");
+        if (dash >= 0) {
+            return " - " + label.substring(dash + 3);
+        }
+        return "";
     }
 
     /** Load one request/response pair into the side-by-side editors with markers. */
@@ -413,9 +459,15 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         private static final javax.swing.text.Highlighter.HighlightPainter CURRENT =
                 new javax.swing.text.DefaultHighlighter.DefaultHighlightPainter(new Color(0x7F, 0xC8, 0xFF));
 
-        MessageEditor(String title) {
+        MessageEditor(JComboBox<String> header) {
             super(new BorderLayout());
-            setBorder(BorderFactory.createTitledBorder(title));
+            setBorder(BorderFactory.createLineBorder(new Color(0xBD, 0xC3, 0xC7)));
+
+            // Burp-style pane header: the Original/Edited dropdown sits at the top.
+            JPanel head = new JPanel(new BorderLayout());
+            head.setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 4));
+            head.add(header, BorderLayout.WEST);
+            add(head, BorderLayout.NORTH);
 
             area.setEditable(false);
             area.setLineWrap(true);
