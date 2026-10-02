@@ -91,9 +91,16 @@ public class ContextualReflectionEngine {
             IHttpService service = baseRequestResponse.getHttpService();
             Injector injector = value -> insertionPoint.buildRequest(helpers.stringToBytes(value));
 
+            String pname = insertionPoint.getInsertionPointName();
             ProbeResult pr = probe(injector, service);
-            if (pr == null || pr.best == null) {
-                return issues; // not reflected, or reflected but not exploitable
+            // Always-on diagnostic so a running active scan shows what happened.
+            callbacks.printOutput("[XSSDetector] Active scan param '" + pname + "': " + pr.diag);
+            if (pr.best == null) {
+                if (pr.reflected) {
+                    // reflected but no break-out (filtered/encoded) -> show in Live Results
+                    recordReflectedFiltered(pname, "Scanner", pr, baseRequestResponse);
+                }
+                return issues;
             }
 
             // STAGE 2 -- live confirmation. No issue without it.
@@ -101,24 +108,20 @@ public class ContextualReflectionEngine {
             if (conf == null || !conf.confirmed) {
                 // Tested but no break-out: surface it (with the full test log) in Live
                 // Results so the attempted payloads are visible; never a Burp issue.
-                recordTestedReflection(insertionPoint.getInsertionPointName(), "Scanner",
-                        pr.best, conf, pr, baseRequestResponse);
-                if (settings != null && settings.getVerboseLogging()) {
-                    callbacks.printOutput("[XSSDetector] Contextual: candidate not confirmed ("
-                            + pr.best.contextLabel + ", param '" + insertionPoint.getInsertionPointName() + "')");
-                }
+                recordTestedReflection(pname, "Scanner", pr.best, conf, pr, baseRequestResponse);
+                callbacks.printOutput("[XSSDetector] Active scan param '" + pname
+                        + "': break-out chars survived but PoC not confirmed (tried "
+                        + (conf != null ? conf.attempts.size() : 0) + " payloads)");
                 return issues;
             }
 
-            IScanIssue issue = buildDynamicIssue(insertionPoint.getInsertionPointName(),
+            IScanIssue issue = buildDynamicIssue(pname,
                     insertionTypeName(insertionPoint.getInsertionPointType()), "Scanner", pr.best, conf,
                     baseRequestResponse, pr);
             if (issue != null) {
                 issues.add(issue);
-                if (settings != null && settings.getVerboseLogging()) {
-                    callbacks.printOutput("[XSSDetector] Contextual: CONFIRMED reflected XSS in param '"
-                            + insertionPoint.getInsertionPointName() + "' (" + pr.best.contextLabel + ")");
-                }
+                callbacks.printOutput("[XSSDetector] Active scan param '" + pname
+                        + "': CONFIRMED " + pr.best.contextLabel + " (via " + conf.technique + ")");
             }
         } catch (Exception e) {
             if (settings != null && settings.getVerboseLogging()) {
@@ -159,46 +162,102 @@ public class ContextualReflectionEngine {
 
     private static final class ProbeResult {
         IHttpRequestResponse probeRR;
-        Finding best;
+        Finding best;            // exploitable break-out finding (null if none)
         String tag;
+        boolean reflected;       // the injected token came back in the response
+        String contextLabel;     // where it landed (diagnostic, even when best == null)
+        String diag = "not reflected"; // short human diagnostic for logging
     }
 
-    /** Stage 1: send the measurement probe and pick the most exploitable reflection site. */
+    private String bodyOf(byte[] respBytes, IResponseInfo respInfo) {
+        return new String(Arrays.copyOfRange(respBytes, respInfo.getBodyOffset(), respBytes.length),
+                StandardCharsets.UTF_8);
+    }
+
+    /** Context label at an index, for diagnostics when there is no break-out. */
+    private String contextLabelAt(String body, int idx, MimeInfo mime) {
+        try {
+            if (mime.isJson || mime.isJavaScript) {
+                return jsonPassiveLabel(body, idx, mime);
+            }
+            CtxResult c = detectContext(body, idx);
+            return contextLabel(c);
+        } catch (Exception e) {
+            return "unknown";
+        }
+    }
+
+    /**
+     * Stage 1: send the measurement probe and pick the most exploitable reflection
+     * site. Always returns a ProbeResult (never null) carrying a diagnostic:
+     *   - best != null         : reflected AND a break-out character survived.
+     *   - reflected, best null  : reflected, but no break-out survived, OR the
+     *                             aggressive probe was filtered (verified with a
+     *                             plain token).
+     *   - !reflected            : the parameter is not reflected at all.
+     */
     private ProbeResult probe(Injector injector, IHttpService service) {
+        ProbeResult pr = new ProbeResult();
         try {
             String tag = randomCanary();
-            byte[] probeRequest = injector.build(buildProbe(tag));
-            IHttpRequestResponse probeRR = callbacks.makeHttpRequest(service, probeRequest);
+            IHttpRequestResponse probeRR = callbacks.makeHttpRequest(service, injector.build(buildProbe(tag)));
+            pr.probeRR = probeRR;
+            pr.tag = tag;
             if (probeRR == null || probeRR.getResponse() == null) {
-                return null;
+                pr.diag = "no response to break-out probe";
+                return pr;
             }
             byte[] respBytes = probeRR.getResponse();
             IResponseInfo respInfo = helpers.analyzeResponse(respBytes);
-            String body = new String(Arrays.copyOfRange(respBytes, respInfo.getBodyOffset(), respBytes.length),
-                    StandardCharsets.UTF_8);
+            String body = bodyOf(respBytes, respInfo);
             MimeInfo mime = classifyMime(respInfo);
 
             List<Integer> sites = reflectionSites(body, tag);
-            if (sites.isEmpty()) {
-                return null;
-            }
-            Finding best = null;
-            for (int siteStart : sites) {
-                Finding f = evaluateSite(body, siteStart, tag, mime);
-                if (f != null && (best == null || f.confidence > best.confidence)) {
-                    best = f;
+            if (!sites.isEmpty()) {
+                pr.reflected = true;
+                Finding best = null;
+                for (int siteStart : sites) {
+                    Finding f = evaluateSite(body, siteStart, tag, mime);
+                    if (f != null && (best == null || f.confidence > best.confidence)) {
+                        best = f;
+                    }
+                    if (best != null && best.confidence >= 100.0) {
+                        break;
+                    }
                 }
-                if (best != null && best.confidence >= 100.0) {
-                    break;
+                pr.best = best;
+                pr.contextLabel = best != null ? best.contextLabel : contextLabelAt(body, sites.get(0), mime);
+                pr.diag = best != null
+                        ? ("reflected; context=" + best.contextLabel + "; break-out character(s) survived")
+                        : ("reflected in " + pr.contextLabel + "; no break-out character survived (encoded/stripped)");
+                return pr;
+            }
+
+            // The aggressive probe did not reflect. Verify with a PLAIN token whether
+            // the parameter reflects at all -- distinguishes "not reflected" from
+            // "reflected but the break-out probe was filtered / the request rejected".
+            String ptag = randomCanary();
+            IHttpRequestResponse plainRR = callbacks.makeHttpRequest(service, injector.build(ptag));
+            if (plainRR != null && plainRR.getResponse() != null) {
+                IResponseInfo pInfo = helpers.analyzeResponse(plainRR.getResponse());
+                String pBody = bodyOf(plainRR.getResponse(), pInfo);
+                MimeInfo pMime = classifyMime(pInfo);
+                int idx = pBody.indexOf(ptag);
+                if (idx >= 0) {
+                    pr.reflected = true;
+                    pr.probeRR = plainRR;
+                    pr.tag = ptag;
+                    pr.contextLabel = contextLabelAt(pBody, idx, pMime);
+                    pr.diag = "reflected in " + pr.contextLabel
+                            + "; break-out probe was filtered/blocked (special characters removed or request rejected)";
+                    return pr;
                 }
             }
-            ProbeResult pr = new ProbeResult();
-            pr.probeRR = probeRR;
-            pr.best = best;
-            pr.tag = tag;
+            pr.diag = "not reflected";
             return pr;
         } catch (Exception e) {
-            return null;
+            pr.diag = "probe error: " + e.getMessage();
+            return pr;
         }
     }
 
@@ -268,7 +327,10 @@ public class ContextualReflectionEngine {
                 Injector injector = injectorFor(baseRequest, name, type);
 
                 ProbeResult pr = probe(injector, service);
-                if (pr == null || pr.best == null) {
+                if (pr.best == null) {
+                    if (pr.reflected) {
+                        recordReflectedFiltered(name, source, pr, rr);
+                    }
                     done++;
                     continue;
                 }
@@ -466,8 +528,14 @@ public class ContextualReflectionEngine {
                                String method, String host, String url, ScanStats stats, List<IScanIssue> found) {
         stats.params++;
         ProbeResult pr = probe(injector, service);
-        if (pr == null || pr.best == null) {
-            stats.notes.add("'" + name + "': not reflected (or no break-out character survived)");
+        if (pr.best == null) {
+            if (pr.reflected) {
+                stats.reflected++;
+                recordReflectedFiltered(name, source, pr, rr);
+                stats.notes.add("'" + name + "': " + pr.diag);
+            } else {
+                stats.notes.add("'" + name + "': " + pr.diag);
+            }
             return;
         }
         stats.reflected++;
@@ -1565,6 +1633,57 @@ public class ContextualReflectionEngine {
             FindingStore.get().add(xf);
         } catch (Exception ignored) {
             // reporting side must never break detection
+        }
+    }
+
+    /**
+     * Record a REFLECTED finding when the parameter reflects (verified with a token)
+     * but no break-out character survived -- either the context encodes them, or the
+     * aggressive probe was filtered. Info only; shows the probe request/response so
+     * the user sees the reflection was found, not missed.
+     */
+    private void recordReflectedFiltered(String param, String source, ProbeResult pr, IHttpRequestResponse baseRR) {
+        try {
+            if (pr == null || !pr.reflected) {
+                return;
+            }
+            IHttpService svc = baseRR != null ? baseRR.getHttpService() : null;
+            String method = "";
+            String url = "";
+            String host = svc != null ? svc.getHost() : "";
+            if (baseRR != null) {
+                try {
+                    IRequestInfo ri = helpers.analyzeRequest(baseRR);
+                    method = ri.getMethod();
+                    url = ri.getUrl() != null ? ri.getUrl().toString() : "";
+                } catch (Exception ignored) {
+                    // best-effort
+                }
+            }
+            String ctx = pr.contextLabel != null ? pr.contextLabel : "unknown";
+            XssFinding xf = new XssFinding(
+                    "Info", XssFinding.STATUS_REFLECTED, ctx, param,
+                    method, host, url, source,
+                    "Reflected in " + ctx + ". " + pr.diag
+                    + " -- not exploitable as tested.",
+                    baseRR != null ? baseRR.getRequest() : null,
+                    baseRR != null ? baseRR.getResponse() : null);
+            xf.reqHighlight = pr.tag;
+            xf.respHighlight = pr.tag;
+            if (svc != null) {
+                xf.port = svc.getPort();
+                xf.https = "https".equalsIgnoreCase(svc.getProtocol());
+            }
+            if (baseRR != null && baseRR.getRequest() != null) {
+                xf.messages.add(new XssFinding.Msg("Original", baseRR.getRequest(), baseRR.getResponse(), null, null));
+            }
+            if (pr.probeRR != null && pr.probeRR.getRequest() != null) {
+                xf.messages.add(new XssFinding.Msg("Probe (reflection test)", pr.probeRR.getRequest(),
+                        pr.probeRR.getResponse(), pr.tag, pr.tag));
+            }
+            FindingStore.get().add(xf);
+        } catch (Exception ignored) {
+            // reporting must never break detection
         }
     }
 
