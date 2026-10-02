@@ -254,10 +254,15 @@ public class ContextualReflectionEngine {
                         break;
                     }
                 }
+                if (best == null) {
+                    // Reflected, but survival could not be measured (the mega-probe may
+                    // have been partly mangled). Try the context's real payload anyway.
+                    best = optimisticFinding(body, sites.get(0), mime);
+                }
                 pr.best = best;
                 pr.contextLabel = best != null ? best.contextLabel : contextLabelAt(body, sites.get(0), mime);
                 pr.diag = best != null
-                        ? ("reflected; context=" + best.contextLabel + "; break-out character(s) survived")
+                        ? ("reflected; context=" + best.contextLabel + "; trying payload")
                         : ("reflected in " + pr.contextLabel + "; no break-out character survived (encoded/stripped)");
                 return pr;
             }
@@ -277,8 +282,14 @@ public class ContextualReflectionEngine {
                     pr.probeRR = plainRR;
                     pr.tag = ptag;
                     pr.contextLabel = contextLabelAt(pBody, idx, pMime);
-                    pr.diag = "reflected in " + pr.contextLabel
-                            + "; break-out probe was filtered/blocked (special characters removed or request rejected)";
+                    // The mega-probe was blocked, but a single realistic payload may
+                    // still get through. Build an optimistic finding for the detected
+                    // context so confirm() tries real payloads and verifies them.
+                    pr.best = optimisticFinding(pBody, idx, pMime);
+                    pr.diag = pr.best != null
+                            ? ("reflected in " + pr.contextLabel
+                               + "; break-out probe filtered -- trying targeted payloads directly")
+                            : ("reflected in " + pr.contextLabel + "; not an exploitable context");
                     return pr;
                 }
             }
@@ -1076,6 +1087,40 @@ public class ContextualReflectionEngine {
             f.fate = fate;
         }
         return f;
+    }
+
+    /**
+     * Build an OPTIMISTIC finding for a reflection whose context is known but whose
+     * character survival could not be measured (the aggressive break-out probe was
+     * filtered/blocked). We assume every break-out character might survive and pick
+     * the context's strongest payload; confirm() then VERIFIES it empirically by
+     * injecting that single realistic payload and checking it reflects unescaped --
+     * so this never causes a false positive, it only gives confirmation a chance
+     * when the mega-probe was rejected. Returns null for inert contexts.
+     */
+    private Finding optimisticFinding(String body, int idx, MimeInfo mime) {
+        try {
+            Map<Character, CharFate> allSurvive = new HashMap<>();
+            for (char ch : SPECIALS) {
+                CharFate cf = new CharFate();
+                cf.present = true;
+                cf.unescaped = true;
+                allSurvive.put(ch, cf);
+            }
+            if (mime.isJson || mime.isJavaScript) {
+                Finding jf = evaluateJson(body, idx, "", allSurvive, mime);
+                if (jf != null) {
+                    return jf;
+                }
+                if (!mime.htmlRenderable) {
+                    return null;
+                }
+            }
+            CtxResult c = detectContext(body, idx);
+            return evaluateHtml(c, allSurvive);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private Finding evaluateHtml(CtxResult c, Map<Character, CharFate> fate) {
