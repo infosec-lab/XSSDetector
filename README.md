@@ -106,8 +106,8 @@ Detection is a two-request, double-confirmed process per insertion point:
 
 **Stage 1 — Measure.** The engine sends one probe of the form
 `CANARY c0 CANARY c1 CANARY … CANARY`, where each `c` is a break-out character
-(`< > " ' ` + `` ` `` + ` ( ) { } ; / \ = :` space `$`). Because the canary is pure
-`[a-z]` it passes through every output encoder unchanged, so splitting the
+(`< > " ' ` + `` ` `` + ` ( ) { } ; / \ = :` space `$ - !`). Because the canary is
+pure `[a-z]` it passes through every output encoder unchanged, so splitting the
 reflected block on the canary reveals precisely how the application transformed
 each character (verbatim, HTML-entity-encoded, backslash-escaped, URL-encoded,
 or stripped). A forward HTML/JS tokenizer — which models rawtext/RCDATA elements,
@@ -116,6 +116,12 @@ string/template literals — fixes the exact reflection context. Exploitability 
 decided from the context plus the surviving characters (e.g. a double-quoted
 attribute only when `"` survives unescaped; an inline script string only when its
 delimiter survives unescaped or `</script>` can terminate the element).
+
+For JSON/JS responses the engine switches to a JSON-aware path — in both the
+active scan and the realtime browse feed — classifying **JSONP callback
+execution**, **JSON rendered as HTML** (wrong/sniffable `Content-Type`, with
+`<`-only or `< >`), and **JSON string break-out** (`"` reflected unescaped), while
+still treating strict `application/json` + `nosniff` as non-exploitable.
 
 **Stage 2 — Confirm.** The context-specific proof-of-concept is injected for real
 and the response is checked for it reflected **verbatim and unescaped**. Only then

@@ -54,9 +54,10 @@ public class ContextualReflectionEngine {
     private final java.util.Set<String> liveProbed =
             java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
-    /** Break-out characters probed, in a fixed order. */
+    /** Break-out characters probed, in a fixed order. ('-' and '!' cover HTML
+     *  comment / conditional-comment tricks like --> and --!>.) */
     private static final char[] SPECIALS = {
-        '<', '>', '"', '\'', '`', '(', ')', '{', '}', ';', '/', '\\', '=', ':', ' ', '$'
+        '<', '>', '"', '\'', '`', '(', ')', '{', '}', ';', '/', '\\', '=', ':', ' ', '$', '-', '!'
     };
 
     /** HTML elements whose content is rawtext/RCDATA: a reflection inside one
@@ -328,12 +329,21 @@ public class ContextualReflectionEngine {
                 if (idx < 0) {
                     continue;
                 }
-                CtxResult c = detectContext(body, idx);
-                if (c.ctx == Ctx.UNKNOWN || c.ctx == Ctx.PLAINTEXT) {
-                    continue; // nothing actionable to flag
+                // Classify the reflection context. JSON/JS responses use the
+                // JSON-aware classifier instead of the HTML tokenizer, so the
+                // realtime feed labels them correctly (JSON value / JSONP).
+                String label;
+                if (mime.isJson || mime.isJavaScript) {
+                    label = jsonPassiveLabel(body, idx, mime);
+                } else {
+                    CtxResult c = detectContext(body, idx);
+                    if (c.ctx == Ctx.UNKNOWN || c.ctx == Ctx.PLAINTEXT) {
+                        continue; // nothing actionable to flag
+                    }
+                    label = contextLabel(c);
                 }
                 XssFinding xf = new XssFinding(
-                        "Info", XssFinding.STATUS_REFLECTED, contextLabel(c), p.getName(),
+                        "Info", XssFinding.STATUS_REFLECTED, label, p.getName(),
                         method, host, url, source,
                         "Reflection seen while browsing - run an active scan to confirm.",
                         rr.getRequest(), rr.getResponse());
@@ -351,6 +361,24 @@ public class ContextualReflectionEngine {
                 callbacks.printError("[ContextualReflectionEngine] passive: " + e.getMessage());
             }
         }
+    }
+
+    /** Lightweight JSON/JSONP context label for the realtime passive feed. */
+    private String jsonPassiveLabel(String body, int idx, MimeInfo mime) {
+        // JSONP: the value sits at (or near) the start and is immediately called.
+        // Scan to the end of the reflected identifier region.
+        int p = idx;
+        while (p < body.length() && (Character.isLetterOrDigit(body.charAt(p)) || body.charAt(p) == '_')) {
+            p++;
+        }
+        boolean nearStart = idx <= firstNonWhitespace(body) + 2;
+        if (nearStart && p < body.length() && body.charAt(p) == '(') {
+            return "JSONP callback";
+        }
+        if (mime.htmlRenderable) {
+            return "JSON rendered as HTML";
+        }
+        return "JSON value";
     }
 
     private String contextLabel(CtxResult c) {
@@ -944,10 +972,33 @@ public class ContextualReflectionEngine {
 
         boolean lt = present(fate, '<');
         boolean gt = present(fate, '>');
+        boolean quote = unescaped(fate, '"');
+        boolean slash = present(fate, '/');
+
+        // JSON body a browser will render as HTML (wrong/sniffable Content-Type).
         if (mime.htmlRenderable && lt && gt) {
             Finding f = hi(Ctx.JSON_STRING, "JSON rendered as HTML", 92.0, "<img src=x onerror=alert(1)>",
                     "The JSON body is served with a Content-Type a browser treats as HTML (" + mime.describe()
                     + ") and < > are reflected unencoded, so injected markup executes.");
+            f.isJson = true;
+            return f;
+        }
+        // JSON string break-out: the string delimiter (") is reflected unescaped
+        // (not \") and markup characters survive, so the string can be closed and
+        // a tag injected. Only reported when the body is html-rendered, so it
+        // stays a true positive.
+        if (mime.htmlRenderable && quote && lt && slash) {
+            Finding f = hi(Ctx.JSON_STRING, "JSON string break-out", 90.0, "\"></script><img src=x onerror=alert(1)>",
+                    "The JSON string delimiter (\") is reflected unescaped and < / survive, so the string can be "
+                    + "closed and markup injected in this html-rendered JSON response.");
+            f.isJson = true;
+            return f;
+        }
+        // '<' alone can still open a tag (the browser auto-completes) when rendered as HTML.
+        if (mime.htmlRenderable && lt) {
+            Finding f = med(Ctx.JSON_STRING, "JSON rendered as HTML", 86.0, "<svg onload=alert(1)>",
+                    "The JSON body is rendered as HTML (" + mime.describe()
+                    + ") and < is reflected unencoded, allowing tag injection.");
             f.isJson = true;
             return f;
         }
