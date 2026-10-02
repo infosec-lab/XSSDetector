@@ -99,6 +99,10 @@ public class ContextualReflectionEngine {
             // STAGE 2 -- live confirmation. No issue without it.
             Confirmation conf = confirm(injector, service, pr.best);
             if (conf == null || !conf.confirmed) {
+                // Tested but no break-out: surface it (with the full test log) in Live
+                // Results so the attempted payloads are visible; never a Burp issue.
+                recordTestedReflection(insertionPoint.getInsertionPointName(), "Scanner",
+                        pr.best, conf, pr, baseRequestResponse);
                 if (settings != null && settings.getVerboseLogging()) {
                     callbacks.printOutput("[XSSDetector] Contextual: candidate not confirmed ("
                             + pr.best.contextLabel + ", param '" + insertionPoint.getInsertionPointName() + "')");
@@ -236,7 +240,7 @@ public class ContextualReflectionEngine {
 
             int done = 0;
             for (IParameter p : reqInfo.getParameters()) {
-                if (done >= 5) {
+                if (done >= 15) {
                     break; // keep browse-time load bounded
                 }
                 final byte type = p.getType();
@@ -280,6 +284,10 @@ public class ContextualReflectionEngine {
                         callbacks.printOutput("[XSSDetector] Live-confirmed reflected XSS: param '" + name
                                 + "' (" + pr.best.contextLabel + ") at " + host + path);
                     }
+                } else {
+                    // Reflected and tested while browsing, but no break-out: record it
+                    // with the full test log so the viewer shows every payload tried.
+                    recordTestedReflection(name, source, pr.best, conf, pr, rr);
                 }
                 done++;
             }
@@ -479,18 +487,9 @@ public class ContextualReflectionEngine {
                         + " (via " + conf.technique + ")");
             }
         } else {
-            XssFinding xf = new XssFinding(
-                    "Info", XssFinding.STATUS_REFLECTED, pr.best.contextLabel, name,
-                    method, host, url, source,
-                    "Reflected in " + pr.best.contextLabel
-                    + " but the break-out payload was filtered/encoded - not exploitable as tested.",
-                    rr.getRequest(), rr.getResponse());
-            xf.reqHighlight = baseValueHighlight;
-            if (service != null) {
-                xf.port = service.getPort();
-                xf.https = "https".equalsIgnoreCase(service.getProtocol());
-            }
-            FindingStore.get().add(xf);
+            // Reflected and tested, but no break-out: record it (with the full test
+            // log of every payload tried) in Live Results; never a Burp issue.
+            recordTestedReflection(name, source, pr.best, conf, pr, rr);
             stats.notes.add("'" + name + "': reflected in " + pr.best.contextLabel
                     + " but break-out filtered/encoded (not exploitable)");
         }
@@ -1509,6 +1508,69 @@ public class ContextualReflectionEngine {
                 callbacks.printError("[ContextualReflectionEngine] issue build failed: " + e.getMessage());
             }
             return null;
+        }
+    }
+
+    /**
+     * Record a REFLECTED finding for a reflection that WAS actively tested but did
+     * not break out, attaching the full test log (Original request/response, the
+     * break-out probe, and every Edited payload tried with its own response and
+     * markers). This is what lets the Live Results viewer show, under the
+     * Original/Edited selector, exactly which contextual payloads were fired at the
+     * reflected parameter and how the app handled each one -- even when nothing was
+     * confirmed. Never reported as a Burp issue (Info only).
+     */
+    private void recordTestedReflection(String param, String source, Finding f,
+                                        Confirmation conf, ProbeResult pr, IHttpRequestResponse baseRR) {
+        try {
+            IHttpService svc = baseRR != null ? baseRR.getHttpService() : null;
+            String method = "";
+            String url = "";
+            String host = svc != null ? svc.getHost() : "";
+            if (baseRR != null) {
+                try {
+                    IRequestInfo ri = helpers.analyzeRequest(baseRR);
+                    method = ri.getMethod();
+                    url = ri.getUrl() != null ? ri.getUrl().toString() : "";
+                } catch (Exception ignored) {
+                    // best-effort
+                }
+            }
+            int tried = conf != null ? conf.attempts.size() : 0;
+            XssFinding xf = new XssFinding(
+                    "Info", XssFinding.STATUS_REFLECTED, f.contextLabel, param,
+                    method, host, url, source,
+                    "Reflected in " + f.contextLabel + ". Tested " + tried
+                    + " contextual payload(s); none broke out as injected (the application "
+                    + "filtered or encoded the break-out characters). See the Edited request/"
+                    + "response variants for exactly what was tried.",
+                    baseRR != null ? baseRR.getRequest() : null,
+                    baseRR != null ? baseRR.getResponse() : null);
+            xf.reqHighlight = pr != null ? pr.tag : null;
+            xf.respHighlight = pr != null ? pr.tag : null;
+            if (svc != null) {
+                xf.port = svc.getPort();
+                xf.https = "https".equalsIgnoreCase(svc.getProtocol());
+            }
+            if (baseRR != null && baseRR.getRequest() != null) {
+                xf.messages.add(new XssFinding.Msg("Original", baseRR.getRequest(), baseRR.getResponse(), null, null));
+            }
+            if (pr != null && pr.probeRR != null) {
+                xf.messages.add(new XssFinding.Msg("Probe (break-out test)", pr.probeRR.getRequest(),
+                        pr.probeRR.getResponse(), pr.tag, pr.tag));
+            }
+            if (conf != null) {
+                for (Attempt a : conf.attempts) {
+                    if (a.rr == null) {
+                        continue;
+                    }
+                    xf.messages.add(new XssFinding.Msg(a.label, a.rr.getRequest(), a.rr.getResponse(),
+                            a.injectedValue, a.poc));
+                }
+            }
+            FindingStore.get().add(xf);
+        } catch (Exception ignored) {
+            // reporting side must never break detection
         }
     }
 
