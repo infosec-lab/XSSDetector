@@ -75,8 +75,6 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
     private ErrorRecoverySystem errorRecoverySystem;
 
     // Enhanced Detection Engines
-    private EnhancedDOMXSSDetector domXssDetector;
-    private EnhancedClientSideAttackDetector clientSideDetector;
     private ContextualReflectionEngine contextualEngine;
     private LiveResultsPanel liveResults;
     private ModernXSSAnalyzer modernXssAnalyzer;
@@ -229,23 +227,6 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 enginesFailed++;
             }
             
-            // Enhanced detection engines - Create these FIRST so they can be injected
-            try {
-                this.domXssDetector = new EnhancedDOMXSSDetector(helpers, callbacks, settings);
-                enginesInitialized++;
-            } catch (Exception e) {
-                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize EnhancedDOMXSSDetector: " + e.getMessage());
-                enginesFailed++;
-            }
-
-            try {
-                this.clientSideDetector = new EnhancedClientSideAttackDetector(helpers, callbacks, settings);
-                enginesInitialized++;
-            } catch (Exception e) {
-                callbacks.printError("[" + PLUGIN_NAME + "] Failed to initialize EnhancedClientSideAttackDetector: " + e.getMessage());
-                enginesFailed++;
-            }
-
             // Contextual reflection engine (context-aware probe-and-confirm,
             // including JSON/JSONP) -- the primary context-aware detector.
             try {
@@ -861,17 +842,12 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 return issues;
             }
 
-            // Reflected XSS is reported only by the ContextualReflectionEngine,
-            // which confirms a live break-out. This passive entry still runs the
-            // DOM / client-side detectors below.
-            if (settings.getModernDetection() || settings.getDomXssDetection()) {
-                List<IScanIssue> comprehensiveIssues = performComprehensiveXSSDetection(baseRequestResponse);
-                if (comprehensiveIssues != null && !comprehensiveIssues.isEmpty()) {
-                    issues.addAll(comprehensiveIssues);
-                    callbacks.printOutput("[" + PLUGIN_NAME + "] Comprehensive detection found " + comprehensiveIssues.size() + " additional issues");
-                }
-            }
-            
+            // XSS is reported ONLY by the ContextualReflectionEngine, which injects
+            // a probe and confirms a live break-out before reporting -- zero
+            // thresholds, zero heuristic guesses, zero false positives. The old
+            // heuristic DOM / client-side / CSP detectors (which scored risk against
+            // thresholds and produced false positives) are no longer invoked.
+
         } catch (Exception e) {
             callbacks.printError("[" + PLUGIN_NAME + "] Error in passive scan: " + e.getMessage());
             if (settings != null && settings.getVerboseLogging()) {
@@ -1379,21 +1355,10 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         // Process based on tool type - run async to avoid blocking
         scanningExecutor.submit(() -> {
             try {
-                // Perform real-time passive scan
-                List<IScanIssue> issues = performRealTimePassiveScan(messageInfo, toolFlag);
-
-                // Report any issues found
-                if (issues != null && !issues.isEmpty()) {
-                    int reported = 0;
-                    for (IScanIssue issue : issues) {
-                        if (reportIssueWithDedup(issue)) {
-                            reported++;
-                        }
-                    }
-                    if (settings != null && settings.getVerboseLogging() && reported > 0) {
-                        callbacks.printOutput("[" + PLUGIN_NAME + "] Real-time scan (" + toolName + ") reported " + reported + " issue(s)");
-                    }
-                }
+                // Heuristic DOM / client-side realtime detection is DISABLED: it
+                // scored risk against thresholds and produced false positives. XSS
+                // is reported only by the confirm-based ContextualReflectionEngine
+                // (passive reflection feed + live auto-confirmation) below.
 
                 // Real-time behavioural feed: record where input is reflected in
                 // this browsed/proxied response (no injection) so the Live Results
@@ -1437,108 +1402,6 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         });
     }
 
-    /**
-     * Perform real-time passive scan on HTTP response
-     */
-    private List<IScanIssue> performRealTimePassiveScan(IHttpRequestResponse messageInfo, int toolFlag) {
-        List<IScanIssue> issues = new ArrayList<>();
-
-        try {
-            // Check content type
-            String contentType = getResponseContentType(messageInfo);
-            if (contentType == null || !isRelevantContentType(contentType)) {
-                return issues;
-            }
-
-            // Reflected XSS is handled solely by the ContextualReflectionEngine,
-            // which runs its own passive feed + live confirmation from
-            // processHttpMessage.
-
-            // DOM XSS detection for Proxy traffic - uses same validation as doPassiveScan
-            // CRITICAL: Require payload reflection to avoid false positives
-            if (toolFlag == IBurpExtenderCallbacks.TOOL_PROXY && settings != null && settings.getDomXssDetection()) {
-                if (domXssDetector != null) {
-                    try {
-                        // Check content type - skip JS files
-                        String domContentType = getResponseContentType(messageInfo);
-                        boolean isJsFile = domContentType != null && (
-                            domContentType.toLowerCase().contains("application/javascript") ||
-                            domContentType.toLowerCase().contains("text/javascript"));
-
-                        if (!isJsFile) {
-                            EnhancedDOMXSSDetector.DOMXSSResult domResult = domXssDetector.analyzeDOMXSS(messageInfo);
-                            if (domResult != null && domResult.isVulnerable()) {
-                                // Same validation as doPassiveScan: require payload reflection
-                                boolean hasPayloadReflection = false;
-                                try {
-                                    byte[] responseBytes = messageInfo.getResponse();
-                                    if (responseBytes != null) {
-                                        int bodyOff = helpers.analyzeResponse(responseBytes).getBodyOffset();
-                                        String respBody = new String(java.util.Arrays.copyOfRange(responseBytes, bodyOff, responseBytes.length), StandardCharsets.UTF_8);
-                                        IRequestInfo ri = helpers.analyzeRequest(messageInfo);
-                                        java.net.URL reqUrl = ri.getUrl();
-                                        if (reqUrl != null && reqUrl.getQuery() != null) {
-                                            for (String param : reqUrl.getQuery().split("&")) {
-                                                if (param.contains("=")) {
-                                                    String[] parts = param.split("=", 2);
-                                                    if (parts.length == 2) {
-                                                        String paramVal = parts[1];
-                                                        try { paramVal = helpers.urlDecode(paramVal); } catch (Exception ignored) {}
-                                                        if (paramVal.length() > 3 && respBody.contains(paramVal)) {
-                                                            hasPayloadReflection = true;
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                } catch (Exception ex) { /* continue */ }
-
-                                if (hasPayloadReflection) {
-                                    IScanIssue domIssue = createDOMXSSIssue(messageInfo, domResult);
-                                    if (domIssue != null) {
-                                        issues.add(domIssue);
-                                    }
-                                }
-                            }
-                        }
-                    } catch (Exception e) {
-                        if (settings != null && settings.getVerboseLogging()) {
-                            callbacks.printError("[" + PLUGIN_NAME + "] Error in real-time DOM XSS check: " + e.getMessage());
-                        }
-                    }
-                }
-            }
-
-            // Client-side attack detection for modern architectures
-            if (settings != null && settings.getModernDetection()) {
-                if (clientSideDetector != null) {
-                    try {
-                        EnhancedClientSideAttackDetector.ClientSideAttackResult clientResult =
-                            clientSideDetector.analyzeClientSideAttacks(messageInfo);
-                        if (clientResult != null && clientResult.isVulnerable()) {
-                            IScanIssue clientIssue = createClientSideIssue(messageInfo, clientResult);
-                            if (clientIssue != null) {
-                                issues.add(clientIssue);
-                            }
-                        }
-                    } catch (Exception e) {
-                        if (settings != null && settings.getVerboseLogging()) {
-                            callbacks.printError("[" + PLUGIN_NAME + "] Error in real-time client-side check: " + e.getMessage());
-                        }
-                    }
-                }
-            }
-
-        } catch (Exception e) {
-            if (settings != null && settings.getVerboseLogging()) {
-                callbacks.printError("[" + PLUGIN_NAME + "] Error in real-time passive scan: " + e.getMessage());
-            }
-        }
-
-        return issues;
-    }
 
     /**
      * Check if content type is relevant for XSS scanning
@@ -1866,317 +1729,6 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         callbacks.printOutput("[" + PLUGIN_NAME + "] Extension unloaded successfully");
     }
 
-    /**
-     * ADVANCED: Perform comprehensive XSS detection with ALL client-side injection attacks
-     * Fully sequenced and ordered for maximum detection power
-     */
-    private List<IScanIssue> performComprehensiveXSSDetection(IHttpRequestResponse requestResponse) {
-        List<IScanIssue> issues = new ArrayList<>();
-        
-        try {
-            // CRITICAL: Strict content type filtering - only scan enabled types
-            String contentType = getResponseContentType(requestResponse);
-            ArrayList<String> enabledContentTypes = settings.getEnabledContentTypes();
-            
-            // STRICT: Only scan if content type is explicitly enabled
-            if (contentType != null) {
-                boolean contentTypeEnabled = false;
-                String lowerContentType = contentType.toLowerCase();
-                
-                // If content types are configured, check them strictly
-                if (enabledContentTypes != null && !enabledContentTypes.isEmpty()) {
-                    for (String enabledType : enabledContentTypes) {
-                        if (enabledType != null) {
-                            String lowerEnabledType = enabledType.toLowerCase();
-                            // Match if content type contains enabled type or vice versa
-                            if (lowerContentType.contains(lowerEnabledType) || 
-                                lowerEnabledType.contains(lowerContentType)) {
-                                contentTypeEnabled = true;
-                                break;
-                            }
-                        }
-                    }
-                } else {
-                    // No content types configured - default to types that render in browsers
-                    // JSON/GraphQL are data formats, not executable — skip them
-                    contentTypeEnabled = lowerContentType.contains("text/html") ||
-                                        lowerContentType.contains("application/xhtml") ||
-                                        lowerContentType.contains("text/xml") ||
-                                        lowerContentType.contains("application/xml") ||
-                                        lowerContentType.contains("text/plain");
-                }
-                
-                // STRICT: Skip if not enabled (no exceptions)
-                if (!contentTypeEnabled) {
-                    if (settings.getVerboseLogging()) {
-                        callbacks.printOutput("[" + PLUGIN_NAME + "] Skipping response - content type not enabled: " + contentType);
-                    }
-                    return issues;
-                }
-            }
-            
-            // STEP 1: Reflected XSS is reported only by the ContextualReflectionEngine.
-
-            // STEP 2: DOM XSS detection (if enabled - client-side DOM manipulation)
-            // CRITICAL: Skip DOM XSS detection for JavaScript files to prevent false positives
-            if (settings.getDomXssDetection() && domXssDetector != null) {
-                try {
-                    // Check content type - skip DOM XSS for JavaScript files
-                    String responseContentType = getResponseContentType(requestResponse);
-                    if (responseContentType != null) {
-                        String lowerContentType = responseContentType.toLowerCase();
-                        if (lowerContentType.contains("application/javascript") ||
-                            lowerContentType.contains("text/javascript") ||
-                            lowerContentType.contains("application/x-javascript") ||
-                            lowerContentType.contains("application/ecmascript") ||
-                            lowerContentType.contains("application/json") ||
-                            lowerContentType.contains("application/graphql") ||
-                            lowerContentType.contains("application/hal+json")) {
-                            // Skip DOM XSS detection for non-HTML content (JS files, JSON APIs, etc.)
-                            if (settings.getVerboseLogging()) {
-                                callbacks.printOutput("[" + PLUGIN_NAME + "] Skipping DOM XSS detection for non-HTML content: " + responseContentType);
-                            }
-                        } else {
-                            // Only perform DOM XSS detection for HTML/XML contexts
-                            EnhancedDOMXSSDetector.DOMXSSResult domResult = domXssDetector.analyzeDOMXSS(requestResponse);
-                            if (domResult != null && domResult.isVulnerable()) {
-                                // CRITICAL: Additional validation - require STRONG evidence AND actual payload reflection
-                                // Don't report DOM XSS without actual data flow correlation or high-confidence real-time vectors
-                                boolean hasSourceSinkCorrelation = domResult.getDataFlows() != null && !domResult.getDataFlows().isEmpty();
-                                EnhancedDOMXSSDetector.RealTimeDynamicAnalysis realTimeAnalysis = domResult.getRealTimeAnalysis();
-                                boolean hasHighConfidenceRealTime = realTimeAnalysis != null && realTimeAnalysis.hasRealTimeVectors() &&
-                                    (realTimeAnalysis.isHasWebSocket() || realTimeAnalysis.isHasMutationObserver() || 
-                                     realTimeAnalysis.isHasServiceWorker() || realTimeAnalysis.isHasDynamicImport() ||
-                                     realTimeAnalysis.isHasWebAssembly());
-                                int vulnerabilityScore = domResult.getVulnerabilityScore();
-                                boolean hasHighScore = vulnerabilityScore >= 70; // High score indicates strong correlation
-                                
-                                // CRITICAL FIX: Verify payload is actually reflected in response
-                                // DOM XSS still requires payload reflection (from URL parameters, etc.)
-                                boolean hasPayloadReflection = false;
-                                try {
-                                    byte[] responseBytes = requestResponse.getResponse();
-                                    if (responseBytes != null && responseBytes.length > 0) {
-                                        int bodyOffset = helpers.analyzeResponse(responseBytes).getBodyOffset();
-                                        String responseBody = new String(java.util.Arrays.copyOfRange(responseBytes, bodyOffset, responseBytes.length), java.nio.charset.StandardCharsets.UTF_8);
-                                        
-                                        // Check if any user-controlled data is reflected (from URL, hash, etc.)
-                                        byte[] requestBytes = requestResponse.getRequest();
-                                        if (requestBytes != null) {
-                                            // CRITICAL FIX: Use IHttpRequestResponse to get full URL with HTTP service details
-                                            IRequestInfo reqInfo = helpers.analyzeRequest(requestResponse);
-                                            java.net.URL url = reqInfo.getUrl();
-                                            if (url != null) {
-                                                String query = url.getQuery();
-                                                String hash = url.getRef();
-                                                
-                                                // Check if query parameters are reflected
-                                                if (query != null && !query.isEmpty()) {
-                                                    String[] params = query.split("&");
-                                                    for (String param : params) {
-                                                        if (param.contains("=")) {
-                                                            String[] parts = param.split("=", 2);
-                                                            if (parts.length == 2) {
-                                                                String paramValue = parts[1];
-                                                                // Check if parameter value is reflected in response
-                                                                if (paramValue.length() > 3 && responseBody.contains(paramValue)) {
-                                                                    hasPayloadReflection = true;
-                                                                    break;
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                
-                                                // Check if hash is reflected
-                                                if (!hasPayloadReflection && hash != null && !hash.isEmpty() && hash.length() > 3) {
-                                                    if (responseBody.contains(hash)) {
-                                                        hasPayloadReflection = true;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                } catch (Exception e) {
-                                    callbacks.printError("[" + PLUGIN_NAME + "] Error checking payload reflection for DOM XSS: " + e.getMessage());
-                                }
-                                
-                                // Only report if we have STRONG evidence AND payload reflection
-                                if ((hasSourceSinkCorrelation || hasHighConfidenceRealTime || hasHighScore) && hasPayloadReflection) {
-                                    Map<String, Object> vulnerabilityData = createVulnerabilityData(domResult);
-                                    vulnerabilityData.put("SCAN_TYPE", "DOM XSS");
-                                    vulnerabilityData.put("vulnerabilityType", "DOM-Based XSS");
-                                    IScanIssue domIssue = issueReporter.createEnhancedXSSIssue(requestResponse, vulnerabilityData);
-                                    if (domIssue != null) {
-                                        issues.add(domIssue);
-                                    }
-                                } else {
-                                    if (!hasPayloadReflection) {
-                                        callbacks.printOutput("[" + PLUGIN_NAME + "] DOM XSS detected but NO payload reflection in response - FALSE POSITIVE FILTERED");
-                                    } else {
-                                        callbacks.printOutput("[" + PLUGIN_NAME + "] DOM XSS detected but insufficient evidence - requires actual data flows, high-confidence real-time vectors, or vulnerability score >= 70. Current score: " + domResult.getVulnerabilityScore());
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        // No content type - perform DOM XSS detection (might be HTML)
-                        EnhancedDOMXSSDetector.DOMXSSResult domResult = domXssDetector.analyzeDOMXSS(requestResponse);
-                        if (domResult != null && domResult.isVulnerable()) {
-                            // Same validation as above - require STRONG evidence AND payload reflection
-                            boolean hasSourceSinkCorrelation = domResult.getDataFlows() != null && !domResult.getDataFlows().isEmpty();
-                            EnhancedDOMXSSDetector.RealTimeDynamicAnalysis realTimeAnalysis = domResult.getRealTimeAnalysis();
-                            boolean hasHighConfidenceRealTime = realTimeAnalysis != null && realTimeAnalysis.hasRealTimeVectors() &&
-                                (realTimeAnalysis.isHasWebSocket() || realTimeAnalysis.isHasMutationObserver() || 
-                                 realTimeAnalysis.isHasServiceWorker() || realTimeAnalysis.isHasDynamicImport() ||
-                                 realTimeAnalysis.isHasWebAssembly());
-                            int vulnerabilityScore = domResult.getVulnerabilityScore();
-                            boolean hasHighScore = vulnerabilityScore >= 70;
-                            
-                            // CRITICAL FIX: Verify payload is actually reflected in response
-                            boolean hasPayloadReflection = false;
-                            try {
-                                byte[] responseBytes = requestResponse.getResponse();
-                                if (responseBytes != null && responseBytes.length > 0) {
-                                    int bodyOffset = helpers.analyzeResponse(responseBytes).getBodyOffset();
-                                    String responseBody = new String(java.util.Arrays.copyOfRange(responseBytes, bodyOffset, responseBytes.length), java.nio.charset.StandardCharsets.UTF_8);
-                                    
-                                    byte[] requestBytes = requestResponse.getRequest();
-                                    if (requestBytes != null) {
-                                        // CRITICAL FIX: Use IHttpRequestResponse to get full URL with HTTP service details
-                                        IRequestInfo reqInfo = helpers.analyzeRequest(requestResponse);
-                                        java.net.URL url = reqInfo.getUrl();
-                                        if (url != null) {
-                                            String query = url.getQuery();
-                                            String hash = url.getRef();
-                                            
-                                            if (query != null && !query.isEmpty()) {
-                                                String[] params = query.split("&");
-                                                for (String param : params) {
-                                                    if (param.contains("=")) {
-                                                        String[] parts = param.split("=", 2);
-                                                        if (parts.length == 2) {
-                                                            String paramValue = parts[1];
-                                                            if (paramValue.length() > 3 && responseBody.contains(paramValue)) {
-                                                                hasPayloadReflection = true;
-                                                                break;
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            
-                                            if (!hasPayloadReflection && hash != null && !hash.isEmpty() && hash.length() > 3) {
-                                                if (responseBody.contains(hash)) {
-                                                    hasPayloadReflection = true;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            } catch (Exception e) {
-                                callbacks.printError("[" + PLUGIN_NAME + "] Error checking payload reflection for DOM XSS: " + e.getMessage());
-                            }
-                            
-                            if ((hasSourceSinkCorrelation || hasHighConfidenceRealTime || hasHighScore) && hasPayloadReflection) {
-                                Map<String, Object> vulnerabilityData = createVulnerabilityData(domResult);
-                                vulnerabilityData.put("SCAN_TYPE", "DOM XSS");
-                                vulnerabilityData.put("vulnerabilityType", "DOM-Based XSS");
-                                IScanIssue domIssue = issueReporter.createEnhancedXSSIssue(requestResponse, vulnerabilityData);
-                                if (domIssue != null) {
-                                    issues.add(domIssue);
-                                }
-                            } else {
-                                if (!hasPayloadReflection) {
-                                    callbacks.printOutput("[" + PLUGIN_NAME + "] DOM XSS detected but NO payload reflection in response - FALSE POSITIVE FILTERED");
-                                }
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                    callbacks.printError("[" + PLUGIN_NAME + "] Error in DOM XSS detection: " + e.getMessage());
-                }
-            }
-            
-            // STEP 3: Comprehensive client-side attack detection (if enabled - ALL client-side injection vectors)
-            if (settings.getModernDetection() && clientSideDetector != null) {
-                try {
-                    EnhancedClientSideAttackDetector.ClientSideAttackResult clientResult = clientSideDetector.analyzeClientSideAttacks(requestResponse);
-                    if (clientResult != null && clientResult.isVulnerable()) {
-                        // Create client-side issue
-                        Map<String, Object> vulnerabilityData = createVulnerabilityData(clientResult);
-                        vulnerabilityData.put("SCAN_TYPE", "Client-Side Attack");
-                        vulnerabilityData.put("vulnerabilityType", "Client-Side Injection");
-                        IScanIssue clientIssue = issueReporter.createEnhancedXSSIssue(requestResponse, vulnerabilityData);
-                        if (clientIssue != null) {
-                            issues.add(clientIssue);
-                        }
-                    }
-                } catch (Exception e) {
-                    callbacks.printError("[" + PLUGIN_NAME + "] Error in client-side attack detection: " + e.getMessage());
-                }
-            }
-            
-            // Step 4: Architecture-based detection (if enabled)
-            if (settings.getModernDetection() && architectureDetector != null) {
-                try {
-                    ModernArchitectureDetector.ArchitectureAnalysis archAnalysis = architectureDetector.analyzeArchitecture(requestResponse);
-                    if (archAnalysis != null && "HIGH".equals(archAnalysis.getRiskLevel())) {
-                        // High-risk architecture detected - perform additional checks
-                        callbacks.printOutput("[" + PLUGIN_NAME + "] High-risk architecture detected: " + archAnalysis.getPrimaryArchitecture());
-                    }
-                } catch (Exception e) {
-                    callbacks.printError("[" + PLUGIN_NAME + "] Error in architecture detection: " + e.getMessage());
-                }
-            }
-            
-            // Step 5: JSON-based XSS detection (if enabled)
-            if (settings.getModernDetection() && jsonAnalyzer != null) {
-                try {
-                    AdvancedJSONAnalyzer.JSONAnalysisResult jsonResult = jsonAnalyzer.analyzeJSONResponse(requestResponse);
-                    if (jsonResult != null && jsonResult.getJsonType() == AdvancedJSONAnalyzer.JSONType.JSONP) {
-                        // JSONP detected - potential XSS vector
-                        callbacks.printOutput("[" + PLUGIN_NAME + "] JSONP detected - potential XSS vector");
-                    }
-                } catch (Exception e) {
-                    callbacks.printError("[" + PLUGIN_NAME + "] Error in JSON analysis: " + e.getMessage());
-                }
-            }
-
-            // Step 6: Modern XSS Attack Vector Analysis
-            // Detects DOM Clobbering, mXSS, Prototype Pollution XSS, PostMessage XSS,
-            // Service Worker hijacking, Import Maps manipulation, Trusted Types bypass,
-            // GraphQL XSS, and WebSocket XSS
-            //
-            // CRITICAL: ModernXSSAnalyzer now internally filters by minimum confidence (70%)
-            // and requires actual evidence (reflected parameters, data flow, etc.)
-            // before reporting. This eliminates false positives like "SVG on page = mXSS".
-            if (settings.getModernDetection() && modernXssAnalyzer != null) {
-                try {
-                    ModernXSSAnalyzer.ModernXSSResult modernResult = modernXssAnalyzer.analyzeForModernXSS(requestResponse);
-                    if (modernResult != null && modernResult.getTotalCount() > 0) {
-                        // Convert each vulnerability to an IScanIssue
-                        for (ModernXSSAnalyzer.VulnerabilityInfo vuln : modernResult.getAllVulnerabilities()) {
-                            IScanIssue modernIssue = createModernXSSIssue(requestResponse, vuln);
-                            if (modernIssue != null) {
-                                issues.add(modernIssue);
-                            }
-                        }
-                        callbacks.printOutput("[" + PLUGIN_NAME + "] Modern XSS Analyzer: " +
-                            modernResult.getTotalCount() + " verified findings (Risk: " +
-                            modernResult.overallRiskLevel + ")");
-                    }
-                } catch (Exception e) {
-                    callbacks.printError("[" + PLUGIN_NAME + "] Error in Modern XSS analysis: " + e.getMessage());
-                }
-            }
-
-        } catch (Exception e) {
-            callbacks.printError("[" + PLUGIN_NAME + "] Error in comprehensive XSS detection: " + e.getMessage());
-        }
-
-        return issues;
-    }
     
     /**
      * Perform active XSS detection with all engines fully integrated

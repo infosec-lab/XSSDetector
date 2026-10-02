@@ -129,6 +129,30 @@ public class ContextualReflectionEngine {
         byte[] build(String value);
     }
 
+    /** Parameter vector types the raw-request scanner tests: query, body, cookie,
+     *  and the structured bodies modern apps use (JSON, XML, multipart). Without
+     *  JSON/XML/multipart a JSON API request yields "0 parameters tested". */
+    private static boolean isTestableParam(byte type) {
+        return type == IParameter.PARAM_URL
+            || type == IParameter.PARAM_BODY
+            || type == IParameter.PARAM_COOKIE
+            || type == IParameter.PARAM_JSON
+            || type == IParameter.PARAM_XML
+            || type == IParameter.PARAM_XML_ATTR
+            || type == IParameter.PARAM_MULTIPART_ATTR;
+    }
+
+    /** Build a type-aware injector. URL/body/cookie values are URL-encoded on the
+     *  wire; JSON/XML/multipart values are inserted raw (Burp places them into the
+     *  structured body without URL-encoding, so the app sees the literal payload). */
+    private Injector injectorFor(final byte[] baseRequest, final String name, final byte type) {
+        final boolean urlEncode = (type == IParameter.PARAM_URL
+                || type == IParameter.PARAM_BODY
+                || type == IParameter.PARAM_COOKIE);
+        return v -> helpers.updateParameter(baseRequest,
+                helpers.buildParameter(name, urlEncode ? helpers.urlEncode(v) : v, type));
+    }
+
     private static final class ProbeResult {
         IHttpRequestResponse probeRR;
         Finding best;
@@ -216,8 +240,8 @@ public class ContextualReflectionEngine {
                     break; // keep browse-time load bounded
                 }
                 final byte type = p.getType();
-                if (type != IParameter.PARAM_URL && type != IParameter.PARAM_BODY && type != IParameter.PARAM_COOKIE) {
-                    continue; // other vector types are covered by the active scanner
+                if (!isTestableParam(type)) {
+                    continue;
                 }
                 String value = p.getValue();
                 if (value == null || value.length() < 3 || looksNavigational(value)) {
@@ -240,8 +264,7 @@ public class ContextualReflectionEngine {
                     continue; // already probed this spot in this session
                 }
                 final String name = p.getName();
-                Injector injector = v -> helpers.updateParameter(baseRequest,
-                        helpers.buildParameter(name, helpers.urlEncode(v), type));
+                Injector injector = injectorFor(baseRequest, name, type);
 
                 ProbeResult pr = probe(injector, service);
                 if (pr == null || pr.best == null) {
@@ -407,13 +430,12 @@ public class ContextualReflectionEngine {
                     break;
                 }
                 final byte type = p.getType();
-                if (type != IParameter.PARAM_URL && type != IParameter.PARAM_BODY && type != IParameter.PARAM_COOKIE) {
+                if (!isTestableParam(type)) {
                     continue;
                 }
                 final String name = p.getName();
                 stats.params++;
-                Injector injector = v -> helpers.updateParameter(baseRequest,
-                        helpers.buildParameter(name, helpers.urlEncode(v), type));
+                Injector injector = injectorFor(baseRequest, name, type);
 
                 ProbeResult pr = probe(injector, service);
                 if (pr == null || pr.best == null) {
