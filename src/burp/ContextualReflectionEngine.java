@@ -149,10 +149,39 @@ public class ContextualReflectionEngine {
             || type == IParameter.PARAM_MULTIPART_ATTR;
     }
 
-    /** Build a type-aware injector. URL/body/cookie values are URL-encoded on the
-     *  wire; JSON/XML/multipart values are inserted raw (Burp places them into the
-     *  structured body without URL-encoding, so the app sees the literal payload). */
-    private Injector injectorFor(final byte[] baseRequest, final String name, final byte type) {
+    /**
+     * Build a type-aware injector for one parameter.
+     *
+     * For URL (request-line) and cookie (header) parameters we rebuild the request
+     * OURSELVES at the parameter's exact byte offsets (getValueStart/getValueEnd),
+     * inserting a single URL-encoding of the payload. This deliberately bypasses
+     * helpers.updateParameter/buildParameter so the bytes sent to the server are
+     * exactly what this (fully tested) code produces -- no dependence on Burp's
+     * internal re-encoding, which otherwise can double-encode the payload and stop
+     * the break-out characters from ever reaching the application. URL and cookie
+     * live outside the message body, so Content-Length stays correct.
+     *
+     * Body / JSON / XML / multipart go through Burp's updateParameter, which fixes
+     * Content-Length and understands the structured body.
+     */
+    private Injector injectorFor(final byte[] baseRequest, final IParameter p) {
+        final byte type = p.getType();
+        final boolean byteLevel = (type == IParameter.PARAM_URL || type == IParameter.PARAM_COOKIE);
+        if (byteLevel) {
+            final int vs = p.getValueStart();
+            final int ve = p.getValueEnd();
+            if (vs > 0 && ve >= vs && ve <= baseRequest.length) {
+                return v -> {
+                    byte[] enc = helpers.urlEncode(v).getBytes(StandardCharsets.ISO_8859_1);
+                    byte[] out = new byte[vs + enc.length + (baseRequest.length - ve)];
+                    System.arraycopy(baseRequest, 0, out, 0, vs);
+                    System.arraycopy(enc, 0, out, vs, enc.length);
+                    System.arraycopy(baseRequest, ve, out, vs + enc.length, baseRequest.length - ve);
+                    return out;
+                };
+            }
+        }
+        final String name = p.getName();
         final boolean urlEncode = (type == IParameter.PARAM_URL
                 || type == IParameter.PARAM_BODY
                 || type == IParameter.PARAM_COOKIE);
@@ -324,7 +353,7 @@ public class ContextualReflectionEngine {
                     continue; // already probed this spot in this session
                 }
                 final String name = p.getName();
-                Injector injector = injectorFor(baseRequest, name, type);
+                Injector injector = injectorFor(baseRequest, p);
 
                 ProbeResult pr = probe(injector, service);
                 if (pr.best == null) {
@@ -499,7 +528,7 @@ public class ContextualReflectionEngine {
                     continue;
                 }
                 testInjection(p.getName(), insertionTypeName(type),
-                        injectorFor(baseRequest, p.getName(), type), p.getValue(),
+                        injectorFor(baseRequest, p), p.getValue(),
                         service, rr, source, method, host, url, stats, found);
                 done++;
             }
