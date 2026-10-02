@@ -222,11 +222,8 @@ public class ContextualReflectionEngine {
                 return found; // don't probe off error-page reflections
             }
             MimeInfo mime = classifyMime(respInfo);
-            String ct = mime.contentType;
-            boolean textual = ct.isEmpty() || ct.contains("html") || ct.contains("json")
-                    || ct.contains("javascript") || ct.contains("xml") || ct.contains("text");
-            if (!textual) {
-                return found;
+            if (!contentTypeAllowed(mime.contentType)) {
+                return found; // response type not in Content Type Management list
             }
             byte[] respBytes = rr.getResponse();
             String body = new String(Arrays.copyOfRange(respBytes, respInfo.getBodyOffset(), respBytes.length),
@@ -320,11 +317,8 @@ public class ContextualReflectionEngine {
                 return;
             }
             MimeInfo mime = classifyMime(respInfo);
-            String ct = mime.contentType;
-            boolean textual = ct.isEmpty() || ct.contains("html") || ct.contains("json")
-                    || ct.contains("javascript") || ct.contains("xml") || ct.contains("text");
-            if (!textual) {
-                return;
+            if (!contentTypeAllowed(mime.contentType)) {
+                return; // response type not in Content Type Management list
             }
             byte[] respBytes = rr.getResponse();
             String body = new String(Arrays.copyOfRange(respBytes, respInfo.getBodyOffset(), respBytes.length),
@@ -1766,6 +1760,40 @@ public class ContextualReflectionEngine {
             }
         }
         return out;
+    }
+
+    /**
+     * True if the response content type is one the user enabled in Content Type
+     * Management (Settings). Substring match either way, so "html" matches
+     * "text/html; charset=utf-8" and vice-versa. When the list is empty, falls
+     * back to the built-in textual set so detection still works out of the box.
+     */
+    private boolean contentTypeAllowed(String ct) {
+        String c = ct == null ? "" : ct.toLowerCase(Locale.ROOT);
+        java.util.List<String> enabled = null;
+        try {
+            enabled = settings != null ? settings.getEnabledContentTypes() : null;
+        } catch (Exception ignored) {
+            enabled = null;
+        }
+        if (enabled != null && !enabled.isEmpty()) {
+            if (c.isEmpty()) {
+                return true; // no content-type header: don't drop it
+            }
+            for (String e : enabled) {
+                if (e == null || e.isEmpty()) {
+                    continue;
+                }
+                String le = e.toLowerCase(Locale.ROOT);
+                if (c.contains(le) || le.contains(c)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        // Fallback: built-in textual set.
+        return c.isEmpty() || c.contains("html") || c.contains("json")
+                || c.contains("javascript") || c.contains("xml") || c.contains("text");
     }
 
     private MimeInfo classifyMime(IResponseInfo respInfo) {
