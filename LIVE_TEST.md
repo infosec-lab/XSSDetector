@@ -82,6 +82,32 @@ not reflected). Reflected-but-not-exploitable spots are listed as grey
 - The PoC bar shows the parameter, its source, context, exploit payload and
   the bypass technique that confirmed it.
 
+## Custom attack (your own payload list)
+
+Select any row with an injectable parameter, then **Custom attack (payload
+list)...** — either the button in the filters panel or the right-click menu
+item. It re-locates that row's exact parameter in its original request and
+fires your own payloads at it, one per live request:
+
+- **Paste** payloads straight into the text area (one per line; blank lines
+  and lines starting with `#` are skipped).
+- **Load from file...** reads a `.txt` list (one payload per line) in.
+- **Built-in set** has five small starter lists (basic tags, attribute
+  break-out, JavaScript context, filter/WAF bypass, a polyglot) you can
+  insert and then edit.
+
+**Start attack** runs the whole list in the background (Stop cancels mid-run)
+and shows a live results table of Payload / Reflected / Status. Any payload
+that comes back **verbatim and unescaped** is also added to the main Live
+Results table as a Confirmed, High-severity row (source "Custom Attack"), so
+it is filterable/exportable/sendable-to-Repeater exactly like an engine-found
+issue. Capped at 2000 payloads per run (asks first if your list is bigger).
+
+This is a separate path from the engine's own automatic, confirmed-only
+detection above — it exists for when you already have a payload (or a list
+from elsewhere) you specifically want tried against a known reflection
+point, rather than the engine's own curated context payloads.
+
 ## Settings that actually drive detection
 
 - **Contextual reflection engine** — master on/off for all detection (keep on).

@@ -270,7 +270,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             JTabbedPane tabs = new JTabbedPane();
 
             // --- Tab 1: Live Results (real-time findings + smart filters) ---
-            liveResults = new LiveResultsPanel(FindingStore.get(), callbacks);
+            liveResults = new LiveResultsPanel(FindingStore.get(), callbacks, contextualEngine);
             tabs.addTab("Live Results", liveResults);
 
             // --- Tab 2: Settings (left-aligned, scrollable sections) ---

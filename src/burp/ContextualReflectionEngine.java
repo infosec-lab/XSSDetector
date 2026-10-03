@@ -161,8 +161,11 @@ public class ContextualReflectionEngine {
         return issues;
     }
 
-    /** How a probe/confirm value is placed into the request (insertion point or raw parameter). */
-    private interface Injector {
+    /** How a probe/confirm value is placed into the request (insertion point or raw
+     *  parameter). Public so the Live Results "Custom Attack" feature (a user-
+     *  supplied payload list fired at a stored finding's exact spot) can reuse the
+     *  same byte-exact, re-encoding-safe injection the engine itself uses. */
+    public interface Injector {
         byte[] build(String value);
     }
 
@@ -217,6 +220,92 @@ public class ContextualReflectionEngine {
                 || type == IParameter.PARAM_COOKIE);
         return v -> helpers.updateParameter(baseRequest,
                 helpers.buildParameter(name, urlEncode ? helpers.urlEncode(v) : v, type));
+    }
+
+    /**
+     * Re-derive an injector for a STORED finding's exact insertion point, from its
+     * original request bytes and the (parameter name, param-source label) recorded
+     * on the finding -- used by the Live Results "Custom Attack" feature so a
+     * user-supplied payload list can be fired at exactly the same spot the engine
+     * found, without re-running discovery. Matches on name + source label first
+     * (unambiguous even when the same name exists as two different parameter
+     * types), falling back to name-only if the label no longer matches. Returns
+     * null when the spot can no longer be located (e.g. the request body changed).
+     */
+    public Injector injectorForFinding(byte[] baseRequest, String paramName, String paramSourceLabel) {
+        if (baseRequest == null || paramName == null || paramName.isEmpty()) {
+            return null;
+        }
+        try {
+            if ("URL path".equals(paramSourceLabel) || paramName.startsWith("URL path: ")) {
+                for (PathSeg seg : urlPathSegments(baseRequest)) {
+                    if (seg.name.equals(paramName)) {
+                        return seg.injector;
+                    }
+                }
+                return null;
+            }
+            IRequestInfo info = helpers.analyzeRequest(baseRequest);
+            Injector nameOnlyFallback = null;
+            for (IParameter p : info.getParameters()) {
+                if (!isTestableParam(p.getType())) {
+                    continue;
+                }
+                if (!p.getName().equals(paramName)) {
+                    continue;
+                }
+                if (paramSourceLabel != null && paramSourceLabel.equals(insertionTypeName(p.getType()))) {
+                    return injectorFor(baseRequest, p);
+                }
+                if (nameOnlyFallback == null) {
+                    nameOnlyFallback = injectorFor(baseRequest, p);
+                }
+            }
+            return nameOnlyFallback;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** One payload fired by the Custom Attack feature and its outcome. */
+    public static final class AttackAttempt {
+        public final String payload;
+        public final boolean reflectedUnescaped; // the payload came back verbatim, unescaped
+        public final int statusCode;
+        public final IHttpRequestResponse requestResponse;
+        public final String error; // set instead of a result when the request itself failed
+
+        AttackAttempt(String payload, boolean reflectedUnescaped, int statusCode,
+                     IHttpRequestResponse requestResponse, String error) {
+            this.payload = payload;
+            this.reflectedUnescaped = reflectedUnescaped;
+            this.statusCode = statusCode;
+            this.requestResponse = requestResponse;
+            this.error = error;
+        }
+    }
+
+    /**
+     * Fire ONE user-supplied payload through an injector built by
+     * {@link #injectorForFinding} and report whether it came back verbatim and
+     * unescaped -- the same live-evidence check {@link #confirm} uses, just
+     * driven by a payload the user chose instead of the engine's own curated
+     * variants. No context inference, no bypass chain: exactly the one payload,
+     * exactly once, so the result is a direct, honest answer for that payload.
+     */
+    public AttackAttempt runCustomPayload(Injector injector, IHttpService service, String payload) {
+        try {
+            IHttpRequestResponse rr = callbacks.makeHttpRequest(service, injector.build(payload));
+            if (rr == null || rr.getResponse() == null) {
+                return new AttackAttempt(payload, false, -1, rr, "no response");
+            }
+            IResponseInfo info = helpers.analyzeResponse(rr.getResponse());
+            String body = bodyOf(rr.getResponse(), info);
+            boolean ok = containsUnescaped(body, payload);
+            return new AttackAttempt(payload, ok, info.getStatusCode(), rr, null);
+        } catch (Exception e) {
+            return new AttackAttempt(payload, false, -1, null, e.getMessage());
+        }
     }
 
     private static final class ProbeResult {
