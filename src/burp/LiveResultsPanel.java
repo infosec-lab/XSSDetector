@@ -269,8 +269,8 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
     }
 
     private void setColWidths() {
-        // Time, Severity, Status, Tested, Context, Parameter, Param Source, URL, Source
-        int[] w = {70, 70, 80, 70, 180, 120, 110, 320, 80};
+        // Time, Severity, Status, Tested, Browser Proof, Context, Parameter, Param Source, URL, Source
+        int[] w = {70, 70, 80, 70, 100, 180, 120, 110, 300, 80};
         for (int i = 0; i < w.length && i < table.getColumnCount(); i++) {
             table.getColumnModel().getColumn(i).setPreferredWidth(w[i]);
         }
@@ -472,8 +472,14 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
                 ? " &nbsp;|&nbsp; via: <b>" + esc(f.technique) + "</b>" : "";
         String src = (f.paramSource != null && !f.paramSource.isEmpty())
                 ? " &nbsp;|&nbsp; Source: <b>" + esc(f.paramSource) + "</b>" : "";
+        String browser = "";
+        if (Boolean.TRUE.equals(f.browserVerified)) {
+            browser = " &nbsp;|&nbsp; <span style='color:#0a7a0a'><b>BROWSER-EXECUTED</b></span> (real headless Chromium)";
+        } else if (Boolean.FALSE.equals(f.browserVerified)) {
+            browser = " &nbsp;|&nbsp; <span style='color:#b06a00'>browser replay: did not fire</span>";
+        }
         pocBar.setText("<html>" + label + " &nbsp;|&nbsp; Parameter: <b>" + esc(f.parameter)
-                + "</b>" + src + " &nbsp;|&nbsp; Context: " + esc(f.context) + via + poc + "</html>");
+                + "</b>" + src + " &nbsp;|&nbsp; Context: " + esc(f.context) + via + poc + browser + "</html>");
     }
 
     private static String esc(String s) {
@@ -534,10 +540,11 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
                 return;
             }
             try (FileWriter w = new FileWriter(fc.getSelectedFile())) {
-                w.write("Time,Severity,Status,Tested,Context,Parameter,Param Source,Method,Host,URL,Source,PoC\n");
+                w.write("Time,Severity,Status,Tested,Browser Proof,Context,Parameter,Param Source,Method,Host,URL,Source,PoC\n");
                 for (XssFinding f : model.rows) {
+                    String browserCol = f.browserVerified == null ? "-" : (f.browserVerified ? "EXECUTED" : "no");
                     w.write(csv(timeFmt.format(new Date(f.time))) + "," + csv(f.severity) + "," + csv(f.status)
-                            + "," + (f.testedContextually ? "Yes" : "No")
+                            + "," + (f.testedContextually ? "Yes" : "No") + "," + csv(browserCol)
                             + "," + csv(f.context) + "," + csv(f.parameter) + "," + csv(f.paramSource)
                             + "," + csv(f.method) + "," + csv(f.host) + "," + csv(f.url) + "," + csv(f.source)
                             + "," + csv(f.poc) + "\n");
@@ -1061,7 +1068,7 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
 
     private class ResultsTableModel extends AbstractTableModel {
         private final String[] cols =
-                {"Time", "Severity", "Status", "Tested", "Context", "Parameter", "Param Source", "URL", "Source"};
+                {"Time", "Severity", "Status", "Tested", "Browser Proof", "Context", "Parameter", "Param Source", "URL", "Source"};
         private List<XssFinding> rows = new ArrayList<>();
 
         void setRows(List<XssFinding> r) {
@@ -1090,19 +1097,24 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
                 // checked for THIS row, vs. a passive text match seen while browsing
                 // that has not been probed yet.
                 case 3: return f.testedContextually ? "Yes" : "No";
-                case 4: return f.context;
-                case 5: return f.parameter;
-                case 6: return f.paramSource == null || f.paramSource.isEmpty() ? "-" : f.paramSource;
-                case 7: return f.url;
-                case 8: return f.source;
+                // Real headless-browser execution proof: stronger than "Tested"
+                // above, which only means a payload was fired, not that it was
+                // confirmed to actually run as JavaScript anywhere else.
+                case 4: return f.browserVerified == null ? "-" : (f.browserVerified ? "EXECUTED" : "no");
+                case 5: return f.context;
+                case 6: return f.parameter;
+                case 7: return f.paramSource == null || f.paramSource.isEmpty() ? "-" : f.paramSource;
+                case 8: return f.url;
+                case 9: return f.source;
                 default: return "";
             }
         }
     }
 
-    /** Column index of the "Tested" cell in {@link ResultsTableModel#cols}. */
+    /** Column indices in {@link ResultsTableModel#cols}. */
     private static final int COL_STATUS = 2;
     private static final int COL_TESTED = 3;
+    private static final int COL_BROWSER_PROOF = 4;
 
     /**
      * Colours the whole row by severity/risk so the riskiest findings stand out
@@ -1123,6 +1135,10 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         public Component getTableCellRendererComponent(JTable t, Object v, boolean sel,
                                                        boolean focus, int row, int col) {
             Component comp = super.getTableCellRendererComponent(t, v, sel, focus, row, col);
+            // The renderer instance is shared across every cell, so any style
+            // tweak (bold, below) must be explicitly reset here or it leaks
+            // into unrelated cells on the next repaint.
+            comp.setFont(comp.getFont().deriveFont(Font.PLAIN));
             if (!sel) {
                 XssFinding f = model.getRow(row);
                 Color bg = Color.WHITE;
@@ -1143,6 +1159,19 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
                         fg = new Color(0xB0, 0x00, 0x20);
                     } else if (col == COL_TESTED) {
                         fg = f.testedContextually ? new Color(0x1B, 0x7A, 0x1B) : new Color(0x80, 0x80, 0x80);
+                    } else if (col == COL_BROWSER_PROOF) {
+                        // The strongest signal this tool can produce -- a real
+                        // browser genuinely ran the JavaScript -- gets its own
+                        // bold, unmistakable color, distinct from the merely
+                        // text-based "Tested" green.
+                        if (Boolean.TRUE.equals(f.browserVerified)) {
+                            fg = new Color(0x0A, 0x7A, 0x0A);
+                            comp.setFont(comp.getFont().deriveFont(Font.BOLD));
+                        } else if (Boolean.FALSE.equals(f.browserVerified)) {
+                            fg = new Color(0xB0, 0x6A, 0x00);
+                        } else {
+                            fg = new Color(0xAA, 0xAA, 0xAA);
+                        }
                     }
                 }
                 comp.setBackground(bg);

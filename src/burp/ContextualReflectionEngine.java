@@ -50,6 +50,13 @@ public class ContextualReflectionEngine {
     private final Settings settings;
     private final java.security.SecureRandom rng = new java.security.SecureRandom();
 
+    /** Real headless-browser execution proof for confirmed, GET-reachable
+     *  findings -- see {@link BrowserExecutionVerifier}. Lazily effective:
+     *  constructing it costs nothing, it only launches a browser process on
+     *  the first actual verify() call, and fails soft forever after if none
+     *  is found. */
+    private final BrowserExecutionVerifier browserVerifier = new BrowserExecutionVerifier();
+
     /** (host|path|type|param) spots already actively probed on browsed traffic. */
     private final java.util.Set<String> liveProbed =
             java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
@@ -127,6 +134,11 @@ public class ContextualReflectionEngine {
         this.helpers = helpers;
         this.callbacks = callbacks;
         this.settings = settings;
+    }
+
+    /** Kill the headless browser process (if one was ever launched). Call on extension unload. */
+    public void shutdownBrowserVerifier() {
+        browserVerifier.shutdown();
     }
 
     /**
@@ -1798,9 +1810,18 @@ public class ContextualReflectionEngine {
                 marked = evidence;
             }
 
+            // Real-browser execution proof, on top of the text-based confirmation
+            // above: replay the exact confirmed request in a local headless
+            // Chromium with alert/confirm/prompt hooked, and report whether they
+            // genuinely fired. GET-only (a browser navigation has no body), and
+            // completely best-effort -- any failure (no browser installed, CDP
+            // hiccup) degrades to "not attempted", never to a false claim either
+            // way, and never blocks the text-based result above.
+            BrowserExecutionVerifier.Verdict browserVerdict = tryBrowserVerify(evidence, conf);
+
             // Professional, Burp-consistent issue name; parameter/context in the detail.
             String name = "Cross-Site Scripting (Reflected)";
-            String detail = renderDetail(f, param, insType, conf.technique);
+            String detail = renderDetail(f, param, insType, conf.technique, browserVerdict);
 
             // Feed the Live Results view (confirmed by live PoC).
             try {
@@ -1820,6 +1841,8 @@ public class ContextualReflectionEngine {
                 xf.technique = conf.technique;        // which bypass technique confirmed it
                 xf.paramSource = insType;             // URL parameter / Body parameter / Cookie / JSON value / ...
                 xf.testedContextually = true;         // a real context-specific payload was injected and confirmed
+                xf.browserVerified = browserVerdict.attempted ? Boolean.valueOf(browserVerdict.executed) : null;
+                xf.browserDetail = browserVerdict.detail;
                 if (svc != null) {
                     xf.port = svc.getPort();
                     xf.https = "https".equalsIgnoreCase(svc.getProtocol());
@@ -1979,8 +2002,55 @@ public class ContextualReflectionEngine {
         }
     }
 
+    /**
+     * Best-effort real-browser execution proof for a confirmed finding. GET
+     * only (navigation has no request body); replays the Cookie header via
+     * CDP Network.setCookie and forwards Authorization/X-* headers, so an
+     * auth-gated reflection still reaches the vulnerable branch. Never
+     * throws, never blocks longer than a few seconds, and an unavailable
+     * browser is reported once (see {@link BrowserExecutionVerifier}) rather
+     * than retried on every confirmed finding.
+     */
+    private BrowserExecutionVerifier.Verdict tryBrowserVerify(IHttpRequestResponse evidence, Confirmation conf) {
+        try {
+            if (settings != null && !settings.getBrowserVerify()) {
+                return BrowserExecutionVerifier.Verdict.unavailable("disabled in Settings");
+            }
+            IRequestInfo ri = helpers.analyzeRequest(evidence);
+            if (!"GET".equalsIgnoreCase(ri.getMethod())) {
+                return BrowserExecutionVerifier.Verdict.unavailable("not attempted (non-GET request)");
+            }
+            String url = ri.getUrl() != null ? ri.getUrl().toString() : null;
+            String cookie = null;
+            List<String[]> extraHeaders = new ArrayList<>();
+            for (String h : ri.getHeaders()) {
+                int colon = h.indexOf(':');
+                if (colon <= 0) {
+                    continue;
+                }
+                String hn = h.substring(0, colon).trim();
+                String hv = h.substring(colon + 1).trim();
+                if ("cookie".equalsIgnoreCase(hn)) {
+                    cookie = hv;
+                } else if ("authorization".equalsIgnoreCase(hn) || hn.toLowerCase(Locale.ROOT).startsWith("x-")) {
+                    extraHeaders.add(new String[]{hn, hv});
+                }
+            }
+            BrowserExecutionVerifier.Verdict v = browserVerifier.verifyGet(url, cookie, extraHeaders);
+            if (v.attempted) {
+                callbacks.printOutput("[XSSDetector] Browser-execution verification: "
+                        + (v.executed ? "CONFIRMED -- alert/confirm/prompt actually fired in a real headless browser"
+                                      : "did NOT fire (text-based confirmation stands; see Live Results for detail)"));
+            }
+            return v;
+        } catch (Exception e) {
+            return BrowserExecutionVerifier.Verdict.unavailable("error: " + e.getMessage());
+        }
+    }
+
     /** Only live, dynamic evidence -- no remediation or static background. */
-    private String renderDetail(Finding f, String param, String insType, String technique) {
+    private String renderDetail(Finding f, String param, String insType, String technique,
+                                BrowserExecutionVerifier.Verdict browserVerdict) {
         StringBuilder d = new StringBuilder();
         d.append("<p><b>Confirmed reflected cross-site scripting</b> - detected by a live context probe and verified by injecting the proof-of-concept.</p>");
         // Parameter kept as plain text immediately after the label so Burp and the
@@ -1990,6 +2060,21 @@ public class ContextualReflectionEngine {
         if (technique != null && !technique.isEmpty()) {
             d.append("<p><b>Confirmed via:</b> ").append(esc(technique))
              .append(" &mdash; the payload executes alert()/confirm()/prompt() in the browser.</p>");
+        }
+        if (browserVerdict != null && browserVerdict.attempted) {
+            if (browserVerdict.executed) {
+                d.append("<p><b>Browser-execution proof:</b> <span style=\"color:#0a7a0a\"><b>CONFIRMED</b></span>"
+                        + " &mdash; alert/confirm/prompt actually fired when this exact request was replayed in a "
+                        + "real, local headless browser (not just text-matched in the HTTP response)");
+                if (!browserVerdict.sinkCalls.isEmpty()) {
+                    d.append(": <code>").append(esc(String.join(", ", browserVerdict.sinkCalls))).append("</code>");
+                }
+                d.append(".</p>");
+            } else {
+                d.append("<p><b>Browser-execution proof:</b> attempted, did not fire within the time budget "
+                        + "(the text-based confirmation above still stands -- this is an additional check, not a "
+                        + "requirement).</p>");
+            }
         }
         d.append("<p><b>Why it is exploitable:</b> ").append(esc(f.reason)).append("</p>");
 

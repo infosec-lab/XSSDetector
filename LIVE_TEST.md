@@ -82,6 +82,48 @@ not reflected). Reflected-but-not-exploitable spots are listed as grey
 - The PoC bar shows the parameter, its source, context, exploit payload and
   the bypass technique that confirmed it.
 
+## Real browser-execution proof
+
+Every "Confirmed" finding above is still, fundamentally, a text match: the
+payload came back unescaped in the HTTP response. That is strong evidence,
+but it is an inference, not a demonstration -- a scanner saying "this text
+would execute" is not the same as it actually executing.
+
+So, on top of every confirmed GET finding, the engine now also drives a
+real, local headless Chromium over the Chrome DevTools Protocol: it hooks
+`alert`/`confirm`/`prompt` (recording the call instead of letting it block a
+modal, which would hang headless Chrome), replays the EXACT confirmed
+request -- including its `Cookie` header and any `Authorization`/`X-*`
+headers, via CDP, so an auth-gated reflection still reaches the vulnerable
+page -- and reports whether the hook genuinely fired. This is pure-JDK (the
+WebSocket client in `java.net.http`, standard since Java 11): no bundled
+browser-automation library, so the extension stays one dependency-free jar.
+
+- **Settings -> Verify execution in a real headless browser** (on by
+  default). Needs a `chromium`/`chromium-browser`/`google-chrome`/
+  `google-chrome-stable`/`chrome`/`microsoft-edge`/`msedge` binary on PATH
+  (or `XSSDETECTOR_CHROME_PATH` pointing at one directly). If none is found,
+  every attempt degrades to "not attempted" -- logged once, never retried,
+  never a false claim either way -- and the text-based result is completely
+  unaffected.
+- POST/PUT/etc. findings are skipped (a browser navigation has no request
+  body) and show "not attempted (non-GET request)".
+- Live Results gets a **Browser Proof** column: bold green **EXECUTED** (the
+  strongest signal this tool can produce), amber **no** (replayed, but
+  didn't fire -- the text-based Confirmed result still stands), or grey
+  **-** (not attempted). The PoC bar and the Burp issue detail both carry
+  the same verdict, plus which sink (`alert`/`confirm`/`prompt`) and
+  argument actually fired when it did.
+- The headless browser process is launched lazily on first use and reused
+  across findings (so after the first ~1-2s cold start, each replay is
+  typically well under a second); it is killed on extension unload.
+
+This was built and verified end-to-end against a local test server during
+development (a genuinely vulnerable unescaped-reflection page that correctly
+reported EXECUTED, a safely-HTML-encoded control page that correctly did
+not, and an auth-gated page that only executed once the session cookie and
+a custom header were replayed) -- not just written to look plausible.
+
 ## Custom attack (your own payload list)
 
 The table is multi-select (ctrl/shift-click, or drag across rows) specifically

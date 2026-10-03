@@ -45,6 +45,15 @@ public final class XssFinding {
      *  Surfaced as its own "Tested" column so the two are never conflated. */
     public boolean testedContextually;
 
+    /** Real headless-browser execution proof (see BrowserExecutionVerifier):
+     *  null = not attempted (non-GET, browser unavailable, or disabled in
+     *  Settings); true = alert/confirm/prompt genuinely fired when replayed
+     *  in a real browser; false = attempted but did not fire. This is a
+     *  STRONGER signal than the text-based confirmation every other field
+     *  here already represents -- it is on top of it, never a substitute. */
+    public Boolean browserVerified;
+    public String browserDetail;
+
     /** One request/response pair shown in the viewer (Original, Edited 1, ...). */
     public static final class Msg {
         public final String label;

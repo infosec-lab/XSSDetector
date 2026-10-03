@@ -16,6 +16,7 @@ class Settings {
     private String aggressiveMode;
     private String autoConfirm;
     private String checkContext;
+    private String browserVerify;
     private IBurpExtenderCallbacks callbacks;
     private ArrayList<Object[]> contentTypes;
     private ArrayList<String> enabledContentTypes;
@@ -100,6 +101,7 @@ class Settings {
         aggressiveMode = FALSE_CONST;
         autoConfirm = TRUE_CONST;
         checkContext = TRUE_CONST;
+        browserVerify = TRUE_CONST;
         
         // Essential detection
         modernDetection = TRUE_CONST;
@@ -168,7 +170,10 @@ class Settings {
             
             checkContext = callbacks.loadExtensionSetting("checkContext");
             if (checkContext == null) checkContext = TRUE_CONST;
-            
+
+            browserVerify = callbacks.loadExtensionSetting("browserVerify");
+            if (browserVerify == null) browserVerify = TRUE_CONST;
+
             // Load detection settings
             modernDetection = callbacks.loadExtensionSetting("modernDetection");
             if (modernDetection == null) modernDetection = TRUE_CONST;
@@ -326,7 +331,8 @@ class Settings {
     public Boolean getAggressiveMode() { return Boolean.valueOf(aggressiveMode); }
     public Boolean getAutoConfirm() { return Boolean.valueOf(autoConfirm); }
     public Boolean getCheckContext() { return Boolean.valueOf(checkContext); }
-    
+    public Boolean getBrowserVerify() { return Boolean.valueOf(browserVerify); }
+
     // Detection getters
     public Boolean getModernDetection() { return Boolean.valueOf(modernDetection); }
     public Boolean getDomXssDetection() { return Boolean.valueOf(domXssDetection); }
@@ -399,7 +405,12 @@ class Settings {
         this.checkContext = String.valueOf(checkContext);
         callbacks.saveExtensionSetting("checkContext", this.checkContext);
     }
-    
+
+    public void setBrowserVerify(boolean browserVerify) {
+        this.browserVerify = String.valueOf(browserVerify);
+        callbacks.saveExtensionSetting("browserVerify", this.browserVerify);
+    }
+
     // Detection setters
     public void setModernDetection(boolean enabled) {
         this.modernDetection = String.valueOf(enabled);

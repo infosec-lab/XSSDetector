@@ -42,6 +42,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
     private JCheckBox aggressiveMode;
     private JCheckBox autoConfirm;
     private JCheckBox checkContext;
+    private JCheckBox browserVerify;
     private JCheckBox modernDetection;
     private JCheckBox domXssDetection;
     private JCheckBox cspAnalysis;
@@ -395,6 +396,8 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 + "manual scan and no Burp scope setup required. Enable 'Scan in-scope targets only' above to restrict "
                 + "this auto-confirmation to targets in Burp's scope. (Right-click -> Active XSS scan always works too.)");
         checkContext = new JCheckBox("Contextual reflection engine  (context-aware, incl. JSON/JSONP)", settings.getCheckContext());
+        browserVerify = new JCheckBox("Verify execution in a real headless browser (GET findings; needs Chrome/Chromium)",
+                settings.getBrowserVerify());
 
         modernDetection = new JCheckBox("Modern framework detection", settings.getModernDetection());
         domXssDetection = new JCheckBox("DOM XSS (source-to-sink)", settings.getDomXssDetection());
@@ -423,13 +426,18 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 + "classifies the reflection context, and confirms with a live proof-of-concept before reporting.");
         aggressiveMode.setToolTipText("Also fire additional encoding/WAF-bypass payloads.");
         scopeOnly.setToolTipText("Restrict all scanning to items inside Burp's target scope.");
+        browserVerify.setToolTipText("<html><body style='width:420px'>On a confirmed GET finding, replay the exact "
+                + "request in a local headless Chromium (launched on demand) with alert/confirm/prompt hooked, and "
+                + "report whether they genuinely fired -- real execution proof on top of the text-based match. "
+                + "Needs a Chromium/Chrome binary on PATH; silently skipped (never a false claim) if none is found, "
+                + "or for non-GET findings.</body></html>");
 
         // --- Assemble the column of titled sections ---
         JPanel col = new JPanel();
         col.setLayout(new BoxLayout(col, BoxLayout.Y_AXIS));
         col.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        col.add(section("Scanning", grid(2, scopeOnly, aggressiveMode, autoConfirm)));
+        col.add(section("Scanning", grid(2, scopeOnly, aggressiveMode, autoConfirm, browserVerify)));
         col.add(Box.createVerticalStrut(8));
 
         // Detection engines, with the primary engine highlighted and described.
@@ -601,6 +609,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         try {
             // CRITICAL: Verify all UI components are initialized before attaching listeners
             if (scopeOnly == null || aggressiveMode == null || autoConfirm == null || checkContext == null ||
+                browserVerify == null ||
                 modernDetection == null || domXssDetection == null || cspAnalysis == null ||
                 enableWAFBypass == null || enableFrameworkSpecific == null || enableEncodingBypass == null ||
                 enableCSPBypass == null || enablePolyglotPayloads == null || enableBrowserSpecific == null ||
@@ -625,6 +634,9 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             });
             checkContext.addActionListener(e -> {
                 if (settings != null) settings.setCheckContext(checkContext.isSelected());
+            });
+            browserVerify.addActionListener(e -> {
+                if (settings != null) settings.setBrowserVerify(browserVerify.isSelected());
             });
             modernDetection.addActionListener(e -> {
                 if (settings != null) settings.setModernDetection(modernDetection.isSelected());
@@ -1911,6 +1923,15 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
 
         // Stop accepting new tasks
         scanPaused = true;
+
+        // Kill the headless browser used for real execution-proof, if one was launched.
+        if (contextualEngine != null) {
+            try {
+                contextualEngine.shutdownBrowserVerifier();
+            } catch (Exception ignored) {
+                // cleanup must never throw during unload
+            }
+        }
 
         // Shutdown executor service gracefully
         if (scanningExecutor != null) {
