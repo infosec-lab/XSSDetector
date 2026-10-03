@@ -84,10 +84,17 @@ not reflected). Reflected-but-not-exploitable spots are listed as grey
 
 ## Custom attack (your own payload list)
 
-Select any row with an injectable parameter, then **Custom attack (payload
-list)...** — either the button in the filters panel or the right-click menu
-item. It re-locates that row's exact parameter in its original request and
-fires your own payloads at it, one per live request:
+The table is multi-select (ctrl/shift-click, or drag across rows) specifically
+so this can target several reflected findings at once. Select one or more
+rows with an injectable parameter, then **Custom attack (payload list)...**
+— either the button in the filters panel or the right-click menu item (a
+right-click on a row already part of your selection keeps the whole
+selection; on an unselected row it replaces it, as usual). Each selected row
+is re-located to its exact parameter in its own original request, and the
+SAME payload list you provide is then fired at every one of them, one
+request per (target, payload) pair. Rows that can't be resolved (parameter no
+longer in the stored request, no host, etc.) are skipped with a reason shown
+up front; the rest still run.
 
 - **Paste** payloads straight into the text area (one per line; blank lines
   and lines starting with `#` are skipped).
@@ -96,12 +103,14 @@ fires your own payloads at it, one per live request:
   break-out, JavaScript context, filter/WAF bypass, a polyglot) you can
   insert and then edit.
 
-**Start attack** runs the whole list in the background (Stop cancels mid-run)
-and shows a live results table of Payload / Reflected / Status. Any payload
-that comes back **verbatim and unescaped** is also added to the main Live
-Results table as a Confirmed, High-severity row (source "Custom Attack"), so
-it is filterable/exportable/sendable-to-Repeater exactly like an engine-found
-issue. Capped at 2000 payloads per run (asks first if your list is bigger).
+**Start attack** runs the whole list against every target in turn, in the
+background (Stop cancels mid-run), and shows a live results table of Target /
+Payload / Reflected / Status. Any payload that comes back **verbatim and
+unescaped** is also added to the main Live Results table as a Confirmed,
+High-severity row (source "Custom Attack"), so it is
+filterable/exportable/sendable-to-Repeater exactly like an engine-found
+issue. Capped at 2000 payloads per run (asks first if your list is bigger) --
+note that is 2000 PER TARGET, so N targets means up to N x 2000 live requests.
 
 This is a separate path from the engine's own automatic, confirmed-only
 detection above — it exists for when you already have a payload (or a list

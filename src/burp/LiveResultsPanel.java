@@ -74,7 +74,11 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         table.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
         table.setRowHeight(22);
         table.setFillsViewportHeight(true);
-        table.getSelectionModel().setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        // Multi-select (ctrl/shift-click, or drag) so Custom Attack can target
+        // several reflected findings at once with the same payload list -- the
+        // single-row actions (Copy URL/PoC, Send to Repeater) still just act on
+        // whichever row is the anchor of the selection.
+        table.getSelectionModel().setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         setColWidths();
 
         table.setDefaultRenderer(Object.class, new SeverityRowRenderer());
@@ -140,7 +144,7 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         JMenuItem copyPoc = new JMenuItem("Copy PoC payload");
         copyPoc.addActionListener(e -> copyToClipboard(get(model.getRow(table.getSelectedRow()), false)));
         JMenuItem customAttack = new JMenuItem("Custom attack (payload list)...");
-        customAttack.addActionListener(e -> openCustomAttack(model.getRow(table.getSelectedRow())));
+        customAttack.addActionListener(e -> openCustomAttack(getSelectedFindings()));
         menu.add(toRepeater);
         menu.add(copyUrl);
         menu.add(copyPoc);
@@ -153,8 +157,14 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
             private void maybeShow(java.awt.event.MouseEvent e) {
                 if (e.isPopupTrigger()) {
                     int row = table.rowAtPoint(e.getPoint());
-                    if (row >= 0) {
+                    // Right-clicking a row that is already part of a multi-row
+                    // selection keeps the whole selection (so Custom Attack can
+                    // target all of them); right-clicking an unselected row
+                    // replaces the selection with just that one, as usual.
+                    if (row >= 0 && !table.isRowSelected(row)) {
                         table.setRowSelectionInterval(row, row);
+                    }
+                    if (row >= 0) {
                         menu.show(table, e.getX(), e.getY());
                     }
                 }
@@ -167,46 +177,85 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         return url ? f.url : f.poc;
     }
 
-    /** Resolve the selected row's injection point and open the Custom Attack dialog. */
-    private void openCustomAttack(XssFinding f) {
-        if (f == null) {
-            JOptionPane.showMessageDialog(this, "Select a finding row first.", "Custom attack",
-                    JOptionPane.INFORMATION_MESSAGE);
+    /** Every selected row's finding, in table order, deduplicated. Multi-select
+     *  (ctrl/shift-click or drag) feeds this -- that's how several reflected
+     *  findings can be attacked with the same payload list in one run. */
+    private List<XssFinding> getSelectedFindings() {
+        List<XssFinding> out = new ArrayList<>();
+        for (int row : table.getSelectedRows()) {
+            XssFinding f = model.getRow(row);
+            if (f != null && !out.contains(f)) {
+                out.add(f);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Resolve EVERY selected row's injection point and open one Custom Attack
+     * dialog covering all of them -- the same pasted/loaded/built-in payload
+     * list is then fired at each selected finding's parameter in turn. Rows
+     * that can't be resolved (no stored request, parameter no longer present,
+     * no host) are skipped with a reason, rather than aborting the whole run.
+     */
+    private void openCustomAttack(List<XssFinding> findings) {
+        if (findings == null || findings.isEmpty()) {
+            JOptionPane.showMessageDialog(this,
+                    "Select one or more finding rows first (ctrl/shift-click or drag to select several).",
+                    "Custom attack", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
-        if (engine == null) {
+        if (engine == null || callbacks == null) {
             JOptionPane.showMessageDialog(this, "Detection engine unavailable.", "Custom attack",
                     JOptionPane.WARNING_MESSAGE);
             return;
         }
-        if (f.request == null || f.parameter == null || f.parameter.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "This row has no injectable parameter to attack.",
+        List<CustomAttackDialog.Target> targets = new ArrayList<>();
+        List<String> skipped = new ArrayList<>();
+        for (XssFinding f : findings) {
+            String why = resolveTarget(f, targets);
+            if (why != null) {
+                skipped.add((f.parameter == null || f.parameter.isEmpty() ? "(no parameter)" : f.parameter) + ": " + why);
+            }
+        }
+        if (targets.isEmpty()) {
+            JOptionPane.showMessageDialog(this,
+                    "None of the selected rows could be resolved to an injectable parameter:\n"
+                    + String.join("\n", skipped),
                     "Custom attack", JOptionPane.WARNING_MESSAGE);
             return;
+        }
+        if (!skipped.isEmpty()) {
+            JOptionPane.showMessageDialog(this,
+                    "Skipping " + skipped.size() + " of " + findings.size() + " selected row(s):\n"
+                    + String.join("\n", skipped) + "\n\nContinuing with the other " + targets.size() + ".",
+                    "Custom attack", JOptionPane.WARNING_MESSAGE);
+        }
+        new CustomAttackDialog(SwingUtilities.getWindowAncestor(this), callbacks, engine, targets).setVisible(true);
+    }
+
+    /** Try to resolve one finding to an attackable target; appends to {@code out}
+     *  on success and returns null, or returns the reason it could not. */
+    private String resolveTarget(XssFinding f, List<CustomAttackDialog.Target> out) {
+        if (f.request == null || f.parameter == null || f.parameter.isEmpty()) {
+            return "no injectable parameter recorded";
+        }
+        if (f.host == null || f.host.isEmpty()) {
+            return "no host recorded";
         }
         ContextualReflectionEngine.Injector injector = engine.injectorForFinding(f.request, f.parameter, f.paramSource);
         if (injector == null) {
-            JOptionPane.showMessageDialog(this,
-                    "Could not locate '" + f.parameter + "' in the stored request -- it may no longer carry "
-                    + "that parameter in the recorded form.",
-                    "Custom attack", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-        if (f.host == null || f.host.isEmpty() || callbacks == null) {
-            JOptionPane.showMessageDialog(this, "No host recorded for this finding.", "Custom attack",
-                    JOptionPane.WARNING_MESSAGE);
-            return;
+            return "could not locate it in the stored request";
         }
         int port = f.port > 0 ? f.port : (f.https ? 443 : 80);
         IHttpService service;
         try {
             service = callbacks.buildHttpService(f.host, port, f.https);
         } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, "Could not build target service: " + ex.getMessage(),
-                    "Custom attack", JOptionPane.ERROR_MESSAGE);
-            return;
+            return "could not build target service (" + ex.getMessage() + ")";
         }
-        new CustomAttackDialog(SwingUtilities.getWindowAncestor(this), engine, injector, service, f).setVisible(true);
+        out.add(new CustomAttackDialog.Target(injector, service, f));
+        return null;
     }
 
     private void copyToClipboard(String s) {
@@ -293,7 +342,7 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         customAttackBtn.setMaximumSize(new Dimension(Integer.MAX_VALUE, customAttackBtn.getPreferredSize().height));
         customAttackBtn.setToolTipText("Pick the selected row's parameter and fire your own payload list at it "
                 + "(paste, load a .txt file, or start from a built-in set)");
-        customAttackBtn.addActionListener(e -> openCustomAttack(model.getRow(table.getSelectedRow())));
+        customAttackBtn.addActionListener(e -> openCustomAttack(getSelectedFindings()));
         p.add(customAttackBtn);
 
         p.add(Box.createVerticalGlue());
@@ -723,11 +772,36 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
      * to the main Live Results view as a Confirmed finding (source "Custom
      * Attack"), so it is visible, filterable and exportable like any other row.
      */
-    private final class CustomAttackDialog extends JDialog {
+    private static final class CustomAttackDialog extends JDialog {
+
+        /** One resolved, attackable spot: an injector for a specific finding's
+         *  exact parameter plus the service to send it to. */
+        static final class Target {
+            final ContextualReflectionEngine.Injector injector;
+            final IHttpService service;
+            final XssFinding finding;
+            final java.util.concurrent.atomic.AtomicInteger confirmedCount = new java.util.concurrent.atomic.AtomicInteger();
+            Target(ContextualReflectionEngine.Injector injector, IHttpService service, XssFinding finding) {
+                this.injector = injector;
+                this.service = service;
+                this.finding = finding;
+            }
+        }
+
+        /** One attempt plus which target it was fired at -- needed once there can
+         *  be more than one target in a single run. */
+        private static final class Row {
+            final Target target;
+            final ContextualReflectionEngine.AttackAttempt attempt;
+            Row(Target target, ContextualReflectionEngine.AttackAttempt attempt) {
+                this.target = target;
+                this.attempt = attempt;
+            }
+        }
+
+        private final IBurpExtenderCallbacks callbacks;
         private final ContextualReflectionEngine engine;
-        private final ContextualReflectionEngine.Injector injector;
-        private final IHttpService service;
-        private final XssFinding finding;
+        private final List<Target> targets;
 
         private final JTextArea payloadArea = new JTextArea(10, 60);
         private final JComboBox<String> builtin = new JComboBox<>(BUILTIN_PAYLOAD_SETS.keySet().toArray(new String[0]));
@@ -735,31 +809,38 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         private final JButton startBtn = new JButton("Start attack");
         private final JButton stopBtn = new JButton("Stop");
         private final DefaultTableModel resultModel =
-                new DefaultTableModel(new Object[]{"Payload", "Reflected", "Status"}, 0) {
+                new DefaultTableModel(new Object[]{"Target (host + parameter)", "Payload", "Reflected", "Status"}, 0) {
                     @Override public boolean isCellEditable(int r, int c) { return false; }
                 };
         private final JTable resultTable = new JTable(resultModel);
-        private final java.util.List<ContextualReflectionEngine.AttackAttempt> attempts = new ArrayList<>();
+        private final java.util.List<Row> rows = new ArrayList<>();
         private final java.util.concurrent.atomic.AtomicBoolean cancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
-        // FindingStore de-duplicates by context|parameter|url -- each confirmed
-        // custom payload must get a distinct context label or only the FIRST
-        // reflected payload in a run would ever make it into Live Results.
-        private final java.util.concurrent.atomic.AtomicInteger confirmedCount = new java.util.concurrent.atomic.AtomicInteger();
         private volatile boolean running = false;
 
-        CustomAttackDialog(Window owner, ContextualReflectionEngine engine, ContextualReflectionEngine.Injector injector,
-                           IHttpService service, XssFinding finding) {
-            super(owner, "Custom attack - " + finding.parameter, ModalityType.MODELESS);
+        CustomAttackDialog(Window owner, IBurpExtenderCallbacks callbacks, ContextualReflectionEngine engine,
+                          List<Target> targets) {
+            super(owner, "Custom attack - " + targets.size() + " target(s)", ModalityType.MODELESS);
+            this.callbacks = callbacks;
             this.engine = engine;
-            this.injector = injector;
-            this.service = service;
-            this.finding = finding;
+            this.targets = targets;
             setLayout(new BorderLayout(8, 8));
             ((JComponent) getContentPane()).setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
-            JLabel header = new JLabel("<html>Target: parameter <b>" + esc(finding.parameter) + "</b> ("
-                    + esc(finding.paramSource == null || finding.paramSource.isEmpty() ? "?" : finding.paramSource)
-                    + ") on <b>" + esc(finding.host) + "</b> &mdash; context: " + esc(finding.context) + "</html>");
+            StringBuilder tb = new StringBuilder("<html>Targets (" + targets.size() + "):<ul style='margin:2px 0 0 14px'>");
+            int shown = 0;
+            for (Target t : targets) {
+                if (shown >= 8) {
+                    tb.append("<li>... and ").append(targets.size() - shown).append(" more</li>");
+                    break;
+                }
+                XssFinding f = t.finding;
+                tb.append("<li><b>").append(esc(f.parameter)).append("</b> (")
+                  .append(esc(f.paramSource == null || f.paramSource.isEmpty() ? "?" : f.paramSource))
+                  .append(") on ").append(esc(f.host)).append(" &mdash; ").append(esc(f.context)).append("</li>");
+                shown++;
+            }
+            tb.append("</ul></html>");
+            JLabel header = new JLabel(tb.toString());
             header.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
             add(header, BorderLayout.NORTH);
 
@@ -819,12 +900,14 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
             JMenuItem toRep = new JMenuItem("Send request to Repeater");
             toRep.addActionListener(e -> {
                 int row = resultTable.getSelectedRow();
-                if (row < 0 || row >= attempts.size()) return;
-                ContextualReflectionEngine.AttackAttempt a = attempts.get(row);
+                if (row < 0 || row >= rows.size()) return;
+                Row r = rows.get(row);
+                ContextualReflectionEngine.AttackAttempt a = r.attempt;
+                XssFinding f = r.target.finding;
                 if (a.requestResponse == null || a.requestResponse.getRequest() == null) return;
                 try {
-                    callbacks.sendToRepeater(finding.host, finding.port > 0 ? finding.port : (finding.https ? 443 : 80),
-                            finding.https, a.requestResponse.getRequest(), "Custom: " + finding.parameter);
+                    callbacks.sendToRepeater(f.host, f.port > 0 ? f.port : (f.https ? 443 : 80),
+                            f.https, a.requestResponse.getRequest(), "Custom: " + f.parameter);
                 } catch (Exception ex) {
                     JOptionPane.showMessageDialog(CustomAttackDialog.this, "Send to Repeater failed: " + ex.getMessage());
                 }
@@ -883,7 +966,7 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
                 }
                 payloads = payloads.subList(0, cap);
             }
-            attempts.clear();
+            rows.clear();
             resultModel.setRowCount(0);
             cancelled.set(false);
             running = true;
@@ -895,30 +978,39 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
             worker.start();
         }
 
+        /** Every selected target gets the WHOLE payload list, one target at a
+         *  time, so progress/results read as complete per-target passes rather
+         *  than interleaved. */
         private void runAttack(List<String> payloads) {
             int reflected = 0;
-            int total = payloads.size();
-            for (int i = 0; i < total; i++) {
-                if (cancelled.get()) {
-                    break;
-                }
-                String payload = payloads.get(i);
-                ContextualReflectionEngine.AttackAttempt a = engine.runCustomPayload(injector, service, payload);
-                if (a.reflectedUnescaped) {
-                    reflected++;
-                    recordConfirmedCustom(a);
-                }
-                final int done = i + 1;
-                final int reflectedSoFar = reflected;
-                SwingUtilities.invokeLater(() -> {
-                    attempts.add(a);
-                    resultModel.addRow(new Object[]{
-                            truncate(a.payload, 120),
-                            a.reflectedUnescaped ? "YES" : (a.error != null ? "error" : "no"),
-                            a.statusCode > 0 ? String.valueOf(a.statusCode) : (a.error != null ? a.error : "-")
+            int totalAttempts = payloads.size() * targets.size();
+            int done = 0;
+            outer:
+            for (Target t : targets) {
+                for (String payload : payloads) {
+                    if (cancelled.get()) {
+                        break outer;
+                    }
+                    ContextualReflectionEngine.AttackAttempt a = engine.runCustomPayload(t.injector, t.service, payload);
+                    if (a.reflectedUnescaped) {
+                        reflected++;
+                        recordConfirmedCustom(t, a);
+                    }
+                    done++;
+                    final int doneSoFar = done;
+                    final int reflectedSoFar = reflected;
+                    final Target target = t;
+                    SwingUtilities.invokeLater(() -> {
+                        rows.add(new Row(target, a));
+                        resultModel.addRow(new Object[]{
+                                truncate(target.finding.parameter + " @ " + target.finding.host, 60),
+                                truncate(a.payload, 120),
+                                a.reflectedUnescaped ? "YES" : (a.error != null ? "error" : "no"),
+                                a.statusCode > 0 ? String.valueOf(a.statusCode) : (a.error != null ? a.error : "-")
+                        });
+                        progress.setText(doneSoFar + " / " + totalAttempts + " tested, " + reflectedSoFar + " reflected");
                     });
-                    progress.setText(done + " / " + total + " tested, " + reflectedSoFar + " reflected");
-                });
+                }
             }
             SwingUtilities.invokeLater(() -> {
                 running = false;
@@ -932,13 +1024,17 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
 
         /** A custom payload that came back verbatim/unescaped is live, confirmed
          *  evidence -- add it to the main Live Results view like any other find. */
-        private void recordConfirmedCustom(ContextualReflectionEngine.AttackAttempt a) {
+        private void recordConfirmedCustom(Target t, ContextualReflectionEngine.AttackAttempt a) {
             try {
                 IHttpRequestResponse rr = a.requestResponse;
                 if (rr == null) {
                     return;
                 }
-                int n = confirmedCount.incrementAndGet();
+                XssFinding finding = t.finding;
+                // FindingStore de-duplicates by context|parameter|url -- each
+                // confirmed custom payload needs a distinct context label or only
+                // the FIRST reflected payload for this target would ever survive.
+                int n = t.confirmedCount.incrementAndGet();
                 XssFinding xf = new XssFinding(
                         "High", XssFinding.STATUS_CONFIRMED,
                         finding.context + " (custom payload #" + n + ")", finding.parameter,
