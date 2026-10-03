@@ -1775,30 +1775,30 @@ public class ContextualReflectionEngine {
         }
         d.append("<p><b>Why it is exploitable:</b> ").append(esc(f.reason)).append("</p>");
 
-        d.append("<h4>Break-out character test (live)</h4>");
-        d.append("<p>Each character was injected at the reflection point; the response shows how the application handled it:</p>");
-        d.append("<table cellpadding=\"3\" cellspacing=\"0\" border=\"1\">");
-        d.append("<tr><th>Character</th><th>Result at reflection point</th></tr>");
+        // Compact one-line survival summary (no HTML table -- clean and copy-safe).
         if (f.fate != null) {
+            StringBuilder survived = new StringBuilder();
             for (char c : SPECIALS) {
                 CharFate cf = f.fate.get(c);
-                if (cf == null) {
-                    continue;
+                if (cf != null && cf.present && cf.unescaped && !cf.htmlEncoded) {
+                    if (survived.length() > 0) {
+                        survived.append(' ');
+                    }
+                    survived.append(esc(displayChar(c)));
                 }
-                d.append("<tr><td><code>").append(esc(displayChar(c))).append("</code></td><td>")
-                 .append(fateLabel(cf)).append("</td></tr>");
+            }
+            if (survived.length() > 0) {
+                d.append("<p><b>Break-out characters reflected unencoded:</b> <code>")
+                 .append(survived).append("</code></p>");
             }
         }
-        d.append("</table>");
 
-        d.append("<h4>Proof of concept (confirmed)</h4>");
-        d.append("<p>Set <code>").append(esc(param)).append("</code> to:</p>");
-        d.append("<pre>").append(esc(f.poc)).append("</pre>");
-        d.append("<p>This payload was injected and observed reflected unencoded in the response.</p>");
+        d.append("<p><b>Proof of concept (confirmed):</b> set <code>").append(esc(param))
+         .append("</code> to <code>").append(esc(f.poc))
+         .append("</code> &mdash; injected and observed reflected unencoded in the response.</p>");
 
         if (confSnippet(f) != null) {
-            d.append("<h4>Live reflection</h4>");
-            d.append("<pre>").append(confSnippet(f)).append("</pre>");
+            d.append("<p><b>Live reflection:</b></p><pre>").append(confSnippet(f)).append("</pre>");
         }
         return d.toString();
     }
@@ -2147,10 +2147,12 @@ public class ContextualReflectionEngine {
         @Override public int getIssueType() { return 0x00200100; } // Reflected XSS
         @Override public String getSeverity() { return severity; }
         @Override public String getConfidence() { return confidence; }
-        @Override public String getIssueBackground() { return ""; }
-        @Override public String getRemediationBackground() { return ""; }
+        // Return null (not "") so Burp hides these static sections entirely --
+        // this report is dynamic, live-evidence only, no boilerplate.
+        @Override public String getIssueBackground() { return null; }
+        @Override public String getRemediationBackground() { return null; }
         @Override public String getIssueDetail() { return detail; }
-        @Override public String getRemediationDetail() { return ""; }
+        @Override public String getRemediationDetail() { return null; }
         @Override public IHttpRequestResponse[] getHttpMessages() { return messages; }
         @Override public IHttpService getHttpService() { return service; }
     }
