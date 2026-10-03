@@ -32,6 +32,19 @@ public final class XssFinding {
     public boolean https;
     public String technique;      // the bypass technique that confirmed it (direct, double-URL-encoded, ...)
 
+    /** Where the parameter lives: "URL parameter", "Body parameter", "Cookie",
+     *  "JSON value", "XML value", "Multipart parameter", "URL path", ... Shown
+     *  as its own column so a cookie/header-style parameter is never confused
+     *  with a query-string one. */
+    public String paramSource = "";
+
+    /** True when THIS row came from an active probe-and-confirm pass (a real
+     *  context-specific payload was injected and the live response checked) --
+     *  as opposed to a purely passive text match while browsing, where the
+     *  parameter's value simply happened to appear somewhere in the response.
+     *  Surfaced as its own "Tested" column so the two are never conflated. */
+    public boolean testedContextually;
+
     /** One request/response pair shown in the viewer (Original, Edited 1, ...). */
     public static final class Msg {
         public final String label;

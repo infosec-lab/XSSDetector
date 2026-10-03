@@ -10,15 +10,27 @@ One engine does the detection: the **Contextual Reflection Engine**. For every
 URL, body, cookie, **JSON, XML and multipart** parameter it
 
 1. sends a canary + break-out probe and measures which characters survive,
-2. classifies the exact reflection context (HTML text, attribute, tag position,
-   `<script>`, JS string / template, event handler, CSS, JSON value, JSONP), and
-3. injects a real payload and **confirms a live break-out** (a working
-   `alert()/confirm()/prompt()`) before it reports anything.
+2. classifies **every distinct reflection context** the parameter lands in
+   (HTML text, attribute, tag position, `<script>`, JS string / template,
+   event handler, CSS, JSON value, JSONP — a parameter reflected into more
+   than one context, e.g. once in HTML and once in a JSON blob, gets a
+   context-specific payload tried against each one, not just the single
+   most-confident context), and
+3. injects a real payload per context and **confirms a live break-out** (a
+   working `alert()/confirm()/prompt()`) before it reports anything.
 
 If the break-out does not come back executable, it is **not** reported as a
 vulnerability — so there are no score thresholds and effectively no false
 positives. The old heuristic DOM / client-side / CSP detectors (which guessed
 against risk thresholds and produced the false positives) have been removed.
+
+**Passive "reflected" sightings require a distinctive value.** While browsing,
+a parameter whose *current* value is a generic boolean/enum/tiny-number
+(`true`, `false`, `0`, `1`, `on`, `off`, `asc`, `desc`, ...) is never flagged
+as "reflected" from a plain text match — that text is likely to appear
+elsewhere in the page for reasons that have nothing to do with the
+parameter. The active probe (which injects a random canary, never the
+original value) still fully tests these parameters for a real break-out.
 
 ## Load it
 
@@ -52,13 +64,23 @@ not reflected). Reflected-but-not-exploitable spots are listed as grey
 
 ## Reading Live Results
 
-- **Confirmed** (red) = verified break-out. **Reflected** (grey) = seen but not
-  (yet) exploitable.
+- **Confirmed** (red) = verified break-out. **Reflected** = seen but not (yet)
+  exploitable; its row is amber if it was *actively tested* (a real
+  context-specific payload was fired and did not break out) and grey-blue if
+  it is a *passive sighting only* (seen while browsing, never yet probed).
+- **Tested** column — "Yes"/"No". Tells you, per row, whether a live payload
+  was actually injected and checked for that exact spot, as opposed to the
+  parameter's existing value merely being spotted somewhere in the response
+  text. Shown in green ("Yes") / grey ("No") so the two very different
+  confidence levels are never confused at a glance.
+- **Param Source** column — where the parameter lives: `URL parameter`,
+  `Body parameter`, `Cookie`, `JSON value`, `XML value`, `Multipart
+  parameter`, or `URL path`.
 - Request on the left, response on the right; each pane's dropdown switches
   Original / Edited 1, 2, 3 … The injected value and the reflected payload are
   highlighted and scrolled to. Per-pane search with ▲/▼.
-- The PoC bar shows the parameter, context, exploit payload and the bypass
-  technique that confirmed it.
+- The PoC bar shows the parameter, its source, context, exploit payload and
+  the bypass technique that confirmed it.
 
 ## Settings that actually drive detection
 
@@ -73,15 +95,20 @@ Other check-boxes (payload packs, etc.) are left in place but the confirm engine
 uses its own fixed, curated set of context payloads and bypasses, so they do not
 change what gets detected.
 
-## Readiness checklist (all passing)
+## Readiness checklist
 
-- Clean compile, Java 11 bytecode (class version 55).
-- Test suites: Engine 17, JSON 5, context 7, dedup 6, variants 11, plus an
-  in-process integration harness (8) that drives real reflected XSS — including a
-  JSON POST body — through the engine and confirms it, while a safely
-  HTML-encoded reflection is correctly **not** confirmed.
+- Clean compile, Java 11 bytecode (class version 55) — verified with
+  `javac --release 11` directly, not just `build.sh`'s own jar step.
 - Jar packs clean (no stale/removed classes); UI renders both tabs.
 - All Burp hooks registered: scanner check, HTTP listener, context-menu factory,
   extension-state listener, suite tab.
 - Detection wired on all three paths: active scan, browse (passive + live
-  confirm), and right-click Active XSS scan.
+  confirm), and right-click Active XSS scan; each now tries a context-specific
+  payload against every distinct reflection context a parameter has, not only
+  the single highest-confidence one.
+
+**No automated test suite is committed to this repo** (`git ls-files` for
+anything test-related returns nothing, despite earlier revisions of this file
+claiming specific passing counts — that claim was never backed by a checked-in
+test). Validate changes against a real target or a local reflecting
+sandbox page before relying on this build live.

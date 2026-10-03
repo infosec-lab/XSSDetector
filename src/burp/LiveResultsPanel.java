@@ -171,7 +171,8 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
     }
 
     private void setColWidths() {
-        int[] w = {70, 70, 80, 180, 120, 360, 80};
+        // Time, Severity, Status, Tested, Context, Parameter, Param Source, URL, Source
+        int[] w = {70, 70, 80, 70, 180, 120, 110, 320, 80};
         for (int i = 0; i < w.length && i < table.getColumnCount(); i++) {
             table.getColumnModel().getColumn(i).setPreferredWidth(w[i]);
         }
@@ -273,7 +274,8 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
             if (XssFinding.STATUS_REFLECTED.equals(f.status) && !reflected) continue;
             if (!matchesContext(f.context, ctxGroup)) continue;
             if (!q.isEmpty()) {
-                String hay = (f.url + " " + f.parameter + " " + f.poc + " " + f.context).toLowerCase();
+                String hay = (f.url + " " + f.parameter + " " + f.poc + " " + f.context + " " + f.paramSource)
+                        .toLowerCase();
                 if (!hay.contains(q)) continue;
             }
             shown.add(f);
@@ -355,12 +357,16 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         boolean confirmed = XssFinding.STATUS_CONFIRMED.equals(f.status);
         String label = confirmed
                 ? "<b>CONFIRMED</b> " + esc(f.severity) + " XSS"
-                : "<b>Reflected</b> (unconfirmed - run an active scan)";
+                : f.testedContextually
+                    ? "<b>Reflected</b> (actively tested - no break-out confirmed)"
+                    : "<b>Reflected</b> (passive sighting - not yet actively tested)";
         String poc = confirmed ? "&nbsp; Payload: <code>" + esc(f.poc) + "</code>" : "";
         String via = (confirmed && f.technique != null && !f.technique.isEmpty() && !"direct".equals(f.technique))
                 ? " &nbsp;|&nbsp; via: <b>" + esc(f.technique) + "</b>" : "";
+        String src = (f.paramSource != null && !f.paramSource.isEmpty())
+                ? " &nbsp;|&nbsp; Source: <b>" + esc(f.paramSource) + "</b>" : "";
         pocBar.setText("<html>" + label + " &nbsp;|&nbsp; Parameter: <b>" + esc(f.parameter)
-                + "</b> &nbsp;|&nbsp; Context: " + esc(f.context) + via + poc + "</html>");
+                + "</b>" + src + " &nbsp;|&nbsp; Context: " + esc(f.context) + via + poc + "</html>");
     }
 
     private static String esc(String s) {
@@ -421,11 +427,13 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
                 return;
             }
             try (FileWriter w = new FileWriter(fc.getSelectedFile())) {
-                w.write("Time,Severity,Status,Context,Parameter,Method,Host,URL,Source,PoC\n");
+                w.write("Time,Severity,Status,Tested,Context,Parameter,Param Source,Method,Host,URL,Source,PoC\n");
                 for (XssFinding f : model.rows) {
                     w.write(csv(timeFmt.format(new Date(f.time))) + "," + csv(f.severity) + "," + csv(f.status)
-                            + "," + csv(f.context) + "," + csv(f.parameter) + "," + csv(f.method)
-                            + "," + csv(f.host) + "," + csv(f.url) + "," + csv(f.source) + "," + csv(f.poc) + "\n");
+                            + "," + (f.testedContextually ? "Yes" : "No")
+                            + "," + csv(f.context) + "," + csv(f.parameter) + "," + csv(f.paramSource)
+                            + "," + csv(f.method) + "," + csv(f.host) + "," + csv(f.url) + "," + csv(f.source)
+                            + "," + csv(f.poc) + "\n");
                 }
             }
             JOptionPane.showMessageDialog(this, "Exported " + model.rows.size() + " finding(s).");
@@ -612,7 +620,8 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
     // ---- table model ----
 
     private class ResultsTableModel extends AbstractTableModel {
-        private final String[] cols = {"Time", "Severity", "Status", "Context", "Parameter", "URL", "Source"};
+        private final String[] cols =
+                {"Time", "Severity", "Status", "Tested", "Context", "Parameter", "Param Source", "URL", "Source"};
         private List<XssFinding> rows = new ArrayList<>();
 
         void setRows(List<XssFinding> r) {
@@ -637,16 +646,38 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
                 case 0: return timeFmt.format(new Date(f.time));
                 case 1: return f.severity;
                 case 2: return f.status;
-                case 3: return f.context;
-                case 4: return f.parameter;
-                case 5: return f.url;
-                case 6: return f.source;
+                // Whether a real context-specific payload was actively injected and
+                // checked for THIS row, vs. a passive text match seen while browsing
+                // that has not been probed yet.
+                case 3: return f.testedContextually ? "Yes" : "No";
+                case 4: return f.context;
+                case 5: return f.parameter;
+                case 6: return f.paramSource == null || f.paramSource.isEmpty() ? "-" : f.paramSource;
+                case 7: return f.url;
+                case 8: return f.source;
                 default: return "";
             }
         }
     }
 
-    /** Colours the whole row by severity so high-risk findings stand out. */
+    /** Column index of the "Tested" cell in {@link ResultsTableModel#cols}. */
+    private static final int COL_STATUS = 2;
+    private static final int COL_TESTED = 3;
+
+    /**
+     * Colours the whole row by severity/risk so the riskiest findings stand out
+     * at a glance, and additionally:
+     *  - bolds the Status cell red for a live-CONFIRMED break-out;
+     *  - colours the Tested cell green ("Yes" - a real payload was actually
+     *    fired at this exact spot) vs. grey ("No" - a passive text match only,
+     *    seen while browsing but never actively probed), so the two very
+     *    different confidence levels behind a "Reflected" row are never
+     *    confused with each other;
+     *  - gives an actively-tested-but-not-yet-exploitable Info row a slightly
+     *    warmer (amber) tint than a purely passive, unprobed one, since the
+     *    former already survived contact with the real application and is a
+     *    stronger candidate for manual follow-up / a bypass attempt.
+     */
     private class SeverityRowRenderer extends DefaultTableCellRenderer {
         @Override
         public Component getTableCellRendererComponent(JTable t, Object v, boolean sel,
@@ -655,21 +686,27 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
             if (!sel) {
                 XssFinding f = model.getRow(row);
                 Color bg = Color.WHITE;
+                Color fg = Color.BLACK;
                 if (f != null) {
                     if ("High".equals(f.severity)) {
                         bg = new Color(0xFD, 0xE7, 0xE9);
                     } else if ("Medium".equals(f.severity)) {
                         bg = new Color(0xFF, 0xF4, 0xDE);
+                    } else if (f.testedContextually) {
+                        // Info, but actively tested: higher potential than a mere
+                        // passive sighting -- a distinct amber tint, not blue.
+                        bg = new Color(0xFC, 0xF1, 0xD8);
                     } else {
                         bg = new Color(0xF0, 0xF4, 0xF8);
                     }
-                    if (XssFinding.STATUS_CONFIRMED.equals(f.status) && col == 2) {
-                        comp.setForeground(new Color(0xB0, 0x00, 0x20));
-                    } else {
-                        comp.setForeground(Color.BLACK);
+                    if (col == COL_STATUS && XssFinding.STATUS_CONFIRMED.equals(f.status)) {
+                        fg = new Color(0xB0, 0x00, 0x20);
+                    } else if (col == COL_TESTED) {
+                        fg = f.testedContextually ? new Color(0x1B, 0x7A, 0x1B) : new Color(0x80, 0x80, 0x80);
                     }
                 }
                 comp.setBackground(bg);
+                comp.setForeground(fg);
             }
             return comp;
         }

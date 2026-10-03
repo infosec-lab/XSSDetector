@@ -66,6 +66,50 @@ public class ContextualReflectionEngine {
         "textarea", "title", "iframe", "xmp", "noembed", "noframes", "noscript"
     ));
 
+    /** Values that are too generic/low-entropy for a plain substring match in the
+     *  response to prove the response text came FROM this parameter. A boolean
+     *  flag like "true"/"false" or a tiny status code like "0"/"1" is extremely
+     *  likely to occur elsewhere in a page (other booleans, counters, config)
+     *  for reasons that have nothing to do with this parameter being reflected.
+     *  The passive "is it reflected" heuristics below skip these to avoid
+     *  reporting a coincidental match as a reflection; the ACTIVE probe/confirm
+     *  path is unaffected (it injects a random canary, never the original
+     *  value, so it still fully tests every such parameter for real). */
+    private static final Set<String> LOW_SIGNAL_VALUES = new HashSet<>(Arrays.asList(
+        "true", "false", "yes", "no", "on", "off", "null", "none", "undefined",
+        "asc", "desc", "male", "female", "active", "inactive", "enabled", "disabled",
+        "public", "private", "admin", "user", "guest", "ok", "success", "error",
+        "fail", "failed", "pending", "en", "en-us", "en-gb"
+    ));
+
+    /** True for a value too generic (a fixed boolean/enum/tiny-number operand)
+     *  to trust a plain substring match in the response as evidence of real
+     *  reflection -- see {@link #LOW_SIGNAL_VALUES}. */
+    private static boolean isLowSignalValue(String v) {
+        if (v == null) {
+            return false;
+        }
+        String s = v.trim().toLowerCase(Locale.ROOT);
+        if (s.isEmpty()) {
+            return false;
+        }
+        if (LOW_SIGNAL_VALUES.contains(s)) {
+            return true;
+        }
+        // Tiny numeric flags/ids/status codes ("0", "1", "-1", "12") are common
+        // enough elsewhere in a page that their presence proves nothing.
+        return s.matches("-?\\d{1,2}");
+    }
+
+    /** How many distinct reflection CONTEXTS of one parameter get their own
+     *  context-specific payload tried. Previously only the single
+     *  highest-confidence context was ever confirmed, so a parameter reflected
+     *  in e.g. both HTML text and a JSON value only ever got the HTML payload
+     *  -- the JSON break-out was silently never attempted. Bounded to keep the
+     *  live-request cost per parameter sane (each context can itself fire up
+     *  to 12 confirmation requests). */
+    private static final int MAX_CONTEXTS_PER_PARAM = 3;
+
     enum Ctx {
         HTML_TEXT, HTML_COMMENT, TAG_NAME_OR_ATTR, ATTR_DOUBLE, ATTR_SINGLE, ATTR_UNQUOTED,
         ATTR_URL, EVENT_HANDLER, SCRIPT_DATA, SCRIPT_STRING_SINGLE, SCRIPT_STRING_DOUBLE,
@@ -92,37 +136,23 @@ public class ContextualReflectionEngine {
             Injector injector = value -> insertionPoint.buildRequest(helpers.stringToBytes(value));
 
             String pname = insertionPoint.getInsertionPointName();
+            String insType = insertionTypeName(insertionPoint.getInsertionPointType());
             ProbeResult pr = probe(injector, service);
             // Always-on diagnostic so a running active scan shows what happened.
             callbacks.printOutput("[XSSDetector] Active scan param '" + pname + "': " + pr.diag);
             if (pr.best == null) {
                 if (pr.reflected) {
                     // reflected but no break-out (filtered/encoded) -> show in Live Results
-                    recordReflectedFiltered(pname, "Scanner", pr, baseRequestResponse);
+                    recordReflectedFiltered(pname, insType, "Scanner", pr, baseRequestResponse);
                 }
                 return issues;
             }
 
-            // STAGE 2 -- live confirmation. No issue without it.
-            Confirmation conf = confirm(injector, service, pr.best);
-            if (conf == null || !conf.confirmed) {
-                // Tested but no break-out: surface it (with the full test log) in Live
-                // Results so the attempted payloads are visible; never a Burp issue.
-                recordTestedReflection(pname, "Scanner", pr.best, conf, pr, baseRequestResponse);
-                callbacks.printOutput("[XSSDetector] Active scan param '" + pname
-                        + "': break-out chars survived but PoC not confirmed (tried "
-                        + (conf != null ? conf.attempts.size() : 0) + " payloads)");
-                return issues;
-            }
-
-            IScanIssue issue = buildDynamicIssue(pname,
-                    insertionTypeName(insertionPoint.getInsertionPointType()), "Scanner", pr.best, conf,
-                    baseRequestResponse, pr);
-            if (issue != null) {
-                issues.add(issue);
-                callbacks.printOutput("[XSSDetector] Active scan param '" + pname
-                        + "': CONFIRMED " + pr.best.contextLabel + " (via " + conf.technique + ")");
-            }
+            // STAGE 2 -- live confirmation, tried against EVERY distinct context this
+            // parameter reflects into (not just the single most-confident one), so a
+            // context-specific payload actually gets applied everywhere it can land.
+            confirmAllContexts(pname, insType, injector, service, pr, baseRequestResponse,
+                    "Scanner", issues, null);
         } catch (Exception e) {
             if (settings != null && settings.getVerboseLogging()) {
                 callbacks.printError("[XSSDetector] Contextual: " + e.getMessage());
@@ -192,6 +222,12 @@ public class ContextualReflectionEngine {
     private static final class ProbeResult {
         IHttpRequestResponse probeRR;
         Finding best;            // exploitable break-out finding (null if none)
+        // Every DISTINCT reflection context found for this parameter (best finding
+        // per context, highest confidence first, capped at MAX_CONTEXTS_PER_PARAM).
+        // best == candidates.get(0) when non-empty. Lets the caller try a
+        // context-specific payload against EVERY context the parameter lands in,
+        // not just the single most-confident one.
+        List<Finding> candidates = new ArrayList<>();
         String tag;
         boolean reflected;       // the injected token came back in the response
         String contextLabel;     // where it landed (diagnostic, even when best == null)
@@ -244,25 +280,46 @@ public class ContextualReflectionEngine {
             List<Integer> sites = reflectionSites(body, tag);
             if (!sites.isEmpty()) {
                 pr.reflected = true;
-                Finding best = null;
+                // Keep the best finding PER DISTINCT CONTEXT (not just one overall
+                // best) so a parameter reflected in several different contexts gets
+                // a context-specific payload tried against every one of them.
+                Map<String, Finding> byContext = new HashMap<>();
                 for (int siteStart : sites) {
                     Finding f = evaluateSite(body, siteStart, tag, mime);
-                    if (f != null && (best == null || f.confidence > best.confidence)) {
-                        best = f;
+                    if (f == null) {
+                        continue;
                     }
-                    if (best != null && best.confidence >= 100.0) {
-                        break;
+                    Finding existing = byContext.get(f.contextLabel);
+                    if (existing == null || f.confidence > existing.confidence) {
+                        byContext.put(f.contextLabel, f);
+                    }
+                }
+                Finding best = null;
+                for (Finding f : byContext.values()) {
+                    if (best == null || f.confidence > best.confidence) {
+                        best = f;
                     }
                 }
                 if (best == null) {
                     // Reflected, but survival could not be measured (the mega-probe may
                     // have been partly mangled). Try the context's real payload anyway.
                     best = optimisticFinding(body, sites.get(0), mime);
+                    if (best != null) {
+                        byContext.put(best.contextLabel, best);
+                    }
+                }
+                List<Finding> candidates = new ArrayList<>(byContext.values());
+                candidates.sort((a, b) -> Double.compare(b.confidence, a.confidence));
+                if (candidates.size() > MAX_CONTEXTS_PER_PARAM) {
+                    candidates = candidates.subList(0, MAX_CONTEXTS_PER_PARAM);
                 }
                 pr.best = best;
+                pr.candidates = candidates;
                 pr.contextLabel = best != null ? best.contextLabel : contextLabelAt(body, sites.get(0), mime);
                 pr.diag = best != null
-                        ? ("reflected; context=" + best.contextLabel + "; trying payload")
+                        ? ("reflected; context=" + best.contextLabel
+                           + (candidates.size() > 1 ? " (+" + (candidates.size() - 1) + " other context(s))" : "")
+                           + "; trying payload")
                         : ("reflected in " + pr.contextLabel + "; no break-out character survived (encoded/stripped)");
                 return pr;
             }
@@ -286,6 +343,9 @@ public class ContextualReflectionEngine {
                     // still get through. Build an optimistic finding for the detected
                     // context so confirm() tries real payloads and verifies them.
                     pr.best = optimisticFinding(pBody, idx, pMime);
+                    if (pr.best != null) {
+                        pr.candidates = new ArrayList<>(Arrays.asList(pr.best));
+                    }
                     pr.diag = pr.best != null
                             ? ("reflected in " + pr.contextLabel
                                + "; break-out probe filtered -- trying targeted payloads directly")
@@ -344,7 +404,12 @@ public class ContextualReflectionEngine {
                     continue;
                 }
                 String value = p.getValue();
-                if (value == null || value.length() < 3 || looksNavigational(value)) {
+                // A plain substring match against a generic value ("true"/"false"/a
+                // tiny numeric flag) proves nothing -- that text is likely to occur
+                // in the response for reasons unrelated to this parameter. Skip the
+                // passive match for those; the active probe below still tests the
+                // parameter fully (it injects a random canary, not this value).
+                if (value == null || value.length() < 3 || looksNavigational(value) || isLowSignalValue(value)) {
                     continue;
                 }
                 String decoded = value;
@@ -364,30 +429,20 @@ public class ContextualReflectionEngine {
                     continue; // already probed this spot in this session
                 }
                 final String name = p.getName();
+                final String insType = insertionTypeName(type);
                 Injector injector = injectorFor(baseRequest, p);
 
                 ProbeResult pr = probe(injector, service);
                 if (pr.best == null) {
                     if (pr.reflected) {
-                        recordReflectedFiltered(name, source, pr, rr);
+                        recordReflectedFiltered(name, insType, source, pr, rr);
                     }
                     done++;
                     continue;
                 }
-                Confirmation conf = confirm(injector, service, pr.best);
-                if (conf != null && conf.confirmed) {
-                    IScanIssue issue = buildDynamicIssue(name, insertionTypeName(type), source, pr.best, conf,
-                            rr, pr);
-                    if (issue != null) {
-                        found.add(issue); // reported by the caller through central de-dup
-                        callbacks.printOutput("[XSSDetector] Live-confirmed reflected XSS: param '" + name
-                                + "' (" + pr.best.contextLabel + ") at " + host + path);
-                    }
-                } else {
-                    // Reflected and tested while browsing, but no break-out: record it
-                    // with the full test log so the viewer shows every payload tried.
-                    recordTestedReflection(name, source, pr.best, conf, pr, rr);
-                }
+                // Try a context-specific payload against EVERY distinct context this
+                // parameter reflects into, not just the single most-confident one.
+                confirmAllContexts(name, insType, injector, service, pr, rr, source, found, null);
                 done++;
             }
         } catch (Exception e) {
@@ -444,6 +499,9 @@ public class ContextualReflectionEngine {
                 if (looksNavigational(value)) {
                     continue; // filenames/paths/URLs echoed back are not XSS candidates
                 }
+                if (isLowSignalValue(value)) {
+                    continue; // e.g. true/false/0/1 -- a substring match proves nothing
+                }
                 String decoded = value;
                 try {
                     String d = helpers.urlDecode(value);
@@ -480,6 +538,8 @@ public class ContextualReflectionEngine {
                         rr.getRequest(), rr.getResponse());
                 xf.reqHighlight = value;    // the parameter value in the request
                 xf.respHighlight = decoded; // where it is reflected in the response
+                xf.paramSource = insertionTypeName(p.getType());
+                xf.testedContextually = false; // passive text match only -- no payload injected yet
                 if (svc != null) {
                     xf.port = svc.getPort();
                     xf.https = "https".equalsIgnoreCase(svc.getProtocol());
@@ -571,7 +631,7 @@ public class ContextualReflectionEngine {
         if (pr.best == null) {
             if (pr.reflected) {
                 stats.reflected++;
-                recordReflectedFiltered(name, source, pr, rr);
+                recordReflectedFiltered(name, typeLabel, source, pr, rr);
                 stats.notes.add("'" + name + "': " + pr.diag);
             } else {
                 stats.notes.add("'" + name + "': " + pr.diag);
@@ -579,21 +639,49 @@ public class ContextualReflectionEngine {
             return;
         }
         stats.reflected++;
-        Confirmation conf = confirm(injector, service, pr.best);
-        if (conf != null && conf.confirmed) {
-            IScanIssue issue = buildDynamicIssue(name, typeLabel, source, pr.best, conf, rr, pr);
-            if (issue != null) {
-                found.add(issue);
-                stats.confirmed++;
-                stats.notes.add("'" + name + "': CONFIRMED " + pr.best.contextLabel
-                        + " (via " + conf.technique + ")");
+        // Try a context-specific payload against EVERY distinct context this
+        // parameter reflects into, not just the single most-confident one.
+        confirmAllContexts(name, typeLabel, injector, service, pr, rr, source, found, stats);
+    }
+
+    /**
+     * Stage 2, run across every distinct reflection context found for one
+     * parameter (bounded by {@link #MAX_CONTEXTS_PER_PARAM}): confirm each
+     * context-specific payload independently and report a finding per context
+     * that confirms (or, if none confirm, a tested-but-filtered Info row per
+     * context). This is what makes sure a parameter reflected into several
+     * different contexts -- e.g. once into HTML text and once into a JSON
+     * value -- gets the RIGHT payload tried against EVERY one of them, instead
+     * of only ever trying the single highest-confidence context and silently
+     * never attempting the others.
+     */
+    private void confirmAllContexts(String name, String insType, Injector injector, IHttpService service,
+                                    ProbeResult pr, IHttpRequestResponse rr, String source,
+                                    List<IScanIssue> found, ScanStats stats) {
+        List<Finding> candidates = pr.candidates.isEmpty()
+                ? java.util.Collections.singletonList(pr.best) : pr.candidates;
+        for (Finding cand : candidates) {
+            Confirmation conf = confirm(injector, service, cand);
+            if (conf != null && conf.confirmed) {
+                IScanIssue issue = buildDynamicIssue(name, insType, source, cand, conf, rr, pr);
+                if (issue != null) {
+                    found.add(issue);
+                    if (stats != null) {
+                        stats.confirmed++;
+                    }
+                    callbacks.printOutput("[XSSDetector] " + source + " param '" + name
+                            + "': CONFIRMED " + cand.contextLabel + " (via " + conf.technique + ")");
+                }
+            } else {
+                // Reflected and tested in this context, but no break-out: record it
+                // (with the full test log of every payload tried) in Live Results;
+                // never a Burp issue.
+                recordTestedReflection(name, insType, source, cand, conf, pr, rr);
+                if (stats != null) {
+                    stats.notes.add("'" + name + "': reflected in " + cand.contextLabel
+                            + " but break-out filtered/encoded (not exploitable)");
+                }
             }
-        } else {
-            // Reflected and tested, but no break-out: record it (with the full test
-            // log of every payload tried) in Live Results; never a Burp issue.
-            recordTestedReflection(name, source, pr.best, conf, pr, rr);
-            stats.notes.add("'" + name + "': reflected in " + pr.best.contextLabel
-                    + " but break-out filtered/encoded (not exploitable)");
         }
     }
 
@@ -1606,6 +1694,8 @@ public class ContextualReflectionEngine {
                 xf.reqHighlight = conf.injectedValue; // the injected probe value in the request
                 xf.respHighlight = f.poc;             // the payload as reflected in the response
                 xf.technique = conf.technique;        // which bypass technique confirmed it
+                xf.paramSource = insType;             // URL parameter / Body parameter / Cookie / JSON value / ...
+                xf.testedContextually = true;         // a real context-specific payload was injected and confirmed
                 if (svc != null) {
                     xf.port = svc.getPort();
                     xf.https = "https".equalsIgnoreCase(svc.getProtocol());
@@ -1656,7 +1746,7 @@ public class ContextualReflectionEngine {
      * reflected parameter and how the app handled each one -- even when nothing was
      * confirmed. Never reported as a Burp issue (Info only).
      */
-    private void recordTestedReflection(String param, String source, Finding f,
+    private void recordTestedReflection(String param, String insType, String source, Finding f,
                                         Confirmation conf, ProbeResult pr, IHttpRequestResponse baseRR) {
         try {
             IHttpService svc = baseRR != null ? baseRR.getHttpService() : null;
@@ -1684,6 +1774,8 @@ public class ContextualReflectionEngine {
                     baseRR != null ? baseRR.getResponse() : null);
             xf.reqHighlight = pr != null ? pr.tag : null;
             xf.respHighlight = pr != null ? pr.tag : null;
+            xf.paramSource = insType;
+            xf.testedContextually = true; // a real context-specific payload WAS injected (just not confirmed)
             if (svc != null) {
                 xf.port = svc.getPort();
                 xf.https = "https".equalsIgnoreCase(svc.getProtocol());
@@ -1716,7 +1808,7 @@ public class ContextualReflectionEngine {
      * aggressive probe was filtered. Info only; shows the probe request/response so
      * the user sees the reflection was found, not missed.
      */
-    private void recordReflectedFiltered(String param, String source, ProbeResult pr, IHttpRequestResponse baseRR) {
+    private void recordReflectedFiltered(String param, String insType, String source, ProbeResult pr, IHttpRequestResponse baseRR) {
         try {
             if (pr == null || !pr.reflected) {
                 return;
@@ -1744,6 +1836,8 @@ public class ContextualReflectionEngine {
                     baseRR != null ? baseRR.getResponse() : null);
             xf.reqHighlight = pr.tag;
             xf.respHighlight = pr.tag;
+            xf.paramSource = insType;
+            xf.testedContextually = true; // the break-out probe WAS fired; it just found nothing exploitable
             if (svc != null) {
                 xf.port = svc.getPort();
                 xf.https = "https".equalsIgnoreCase(svc.getProtocol());
