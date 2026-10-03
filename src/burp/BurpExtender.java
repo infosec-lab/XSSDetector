@@ -161,6 +161,36 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         callbacks.printOutput("[" + PLUGIN_NAME + "] Initialized successfully");
         callbacks.printOutput("[" + PLUGIN_NAME + "] Version: " + VERSION);
         callbacks.printOutput("[" + PLUGIN_NAME + "] Real-time HTTP monitoring: ENABLED");
+        printEffectiveSettings();
+    }
+
+    /**
+     * One-time, always-on summary of the settings that actually gate
+     * detection, printed to the Output tab at load. "Why do I never see
+     * anything confirmed" is very often answered right here -- e.g. the
+     * engine toggle is off, or the target's Content-Type isn't in the
+     * enabled list below -- without having to hunt through Settings or turn
+     * on Verbose logging first.
+     */
+    private void printEffectiveSettings() {
+        try {
+            callbacks.printOutput("[" + PLUGIN_NAME + "] --- Effective settings (Settings tab changes these live) ---");
+            callbacks.printOutput("[" + PLUGIN_NAME + "]   Contextual reflection engine (master toggle): "
+                    + (settings.getCheckContext() ? "ON" : "OFF -- NO detection runs at all while this is off"));
+            callbacks.printOutput("[" + PLUGIN_NAME + "]   Live confirm while browsing: "
+                    + (settings.getAutoConfirm() ? "ON" : "OFF -- browsing will only show passive 'Reflected' rows, never Confirmed"));
+            callbacks.printOutput("[" + PLUGIN_NAME + "]   Scan in-scope targets only: "
+                    + (settings.getScopeOnly() ? "ON -- traffic outside Burp's Target scope is ignored" : "OFF (all hosts)"));
+            java.util.List<String> cts = settings.getEnabledContentTypes();
+            callbacks.printOutput("[" + PLUGIN_NAME + "]   Content Type Management (gates browse-time detection only): "
+                    + ((cts == null || cts.isEmpty()) ? "none set -- falling back to the built-in html/json/js/xml/text set"
+                                                        : String.join(", ", cts)));
+            callbacks.printOutput("[" + PLUGIN_NAME + "]   If nothing ever reaches Confirmed: watch this Output tab while "
+                    + "browsing for '[XSSDetector] Live browse param ...' lines -- they say, per parameter, whether it "
+                    + "reflected, was filtered/encoded, or had no break-out, which is the usual reason.");
+        } catch (Exception ignored) {
+            // diagnostics must never affect extension load
+        }
     }
     
     /**

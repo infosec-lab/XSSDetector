@@ -54,6 +54,13 @@ public class ContextualReflectionEngine {
     private final java.util.Set<String> liveProbed =
             java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
+    /** Keys of one-off diagnostic lines already printed this session, so a
+     *  "why is nothing happening" explanation (e.g. content-type not enabled)
+     *  fires once per distinct cause instead of flooding the Output tab on
+     *  every single request. */
+    private final java.util.Set<String> loggedOnce =
+            java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
     /** Break-out characters probed, in a fixed order. ('-' and '!' cover HTML
      *  comment / conditional-comment tricks like --> and --!>.) */
     private static final char[] SPECIALS = {
@@ -471,6 +478,19 @@ public class ContextualReflectionEngine {
             }
             MimeInfo mime = classifyMime(respInfo);
             if (!contentTypeAllowed(mime.contentType)) {
+                // Silent drop is the single most common reason "nothing ever
+                // confirms" -- a target's actual Content-Type isn't in Content
+                // Type Management's enabled list. Always worth one line: this
+                // fires at most once per distinct content-type/host, not per
+                // request, so it can't flood the Output tab.
+                IHttpService svc0 = rr.getHttpService();
+                String skipKey = "ct-skip|" + (svc0 != null ? svc0.getHost() : "") + "|" + mime.contentType;
+                if (loggedOnce.add(skipKey)) {
+                    callbacks.printOutput("[XSSDetector] Live browse: response Content-Type '"
+                            + (mime.contentType.isEmpty() ? "(none)" : mime.contentType)
+                            + "' at " + (svc0 != null ? svc0.getHost() : "?")
+                            + " is not enabled in Settings -> Content Type Management -- skipping.");
+                }
                 return found; // response type not in Content Type Management list
             }
             byte[] respBytes = rr.getResponse();
@@ -515,13 +535,21 @@ public class ContextualReflectionEngine {
                 }
                 String key = host + "|" + path + "|" + type + "|" + p.getName();
                 if (!liveProbed.add(key)) {
-                    continue; // already probed this spot in this session
+                    continue; // already probed this spot in this session (see Settings diagnostics)
                 }
                 final String name = p.getName();
                 final String insType = insertionTypeName(type);
                 Injector injector = injectorFor(baseRequest, p);
 
                 ProbeResult pr = probe(injector, service);
+                // Always-on, one line per parameter actually probed -- this is the
+                // SAME diagnostic the active Scanner path has always printed. Without
+                // it, browsing silently tries nothing you can see: if confirmation
+                // never happens, check the extension's Output tab for lines like this
+                // to see whether the parameter was even reflected, let alone why it
+                // didn't break out.
+                callbacks.printOutput("[XSSDetector] Live browse param '" + name + "' (" + insType + ") at "
+                        + host + path + ": " + pr.diag);
                 if (pr.best == null) {
                     if (pr.reflected) {
                         recordReflectedFiltered(name, insType, source, pr, rr);
@@ -531,7 +559,14 @@ public class ContextualReflectionEngine {
                 }
                 // Try a context-specific payload against EVERY distinct context this
                 // parameter reflects into, not just the single most-confident one.
+                int beforeConfirmed = found.size();
                 confirmAllContexts(name, insType, injector, service, pr, rr, source, found, null);
+                if (found.size() == beforeConfirmed) {
+                    callbacks.printOutput("[XSSDetector] Live browse param '" + name
+                            + "': break-out character(s) survived but no PoC variant was confirmed "
+                            + "unescaped in the live response (see the 'Reflected' row's Edited attempts "
+                            + "in Live Results for exactly what was tried).");
+                }
                 done++;
             }
         } catch (Exception e) {

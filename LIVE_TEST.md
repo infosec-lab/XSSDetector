@@ -142,6 +142,49 @@ change what gets detected.
   payload against every distinct reflection context a parameter has, not only
   the single highest-confidence one.
 
+## Troubleshooting: "I don't see anything Confirmed anywhere"
+
+Open Burp's **Extender -> Extensions -> XSSDetector -> Output** tab (not the
+XSSDetector suite tab -- the Extender output console). Two things to look
+for, both now always printed (no need to turn on Verbose logging first):
+
+1. **At load**, an "Effective settings" block: whether the engine toggle is
+   even ON, whether "Live confirm while browsing" is ON, and -- usually the
+   actual cause -- the Content Type Management list. Browse-time detection
+   (passive + live confirm) ONLY looks at responses whose Content-Type is in
+   that list; if your target serves e.g. `application/vnd.api+json` and only
+   `text/html`/`application/json` are enabled, every response is silently
+   skipped. A one-time line also fires the first time a response is skipped
+   for exactly this reason, naming the actual Content-Type seen.
+2. **While browsing**, one `Live browse param '<name>' (<source>) at
+   <host><path>: <diagnostic>` line per parameter that was actually tested
+   (the same diagnostic the active Scanner path has always printed). It
+   tells you plainly which of these happened:
+   - `not reflected` -- the parameter's value never came back at all.
+   - `reflected in <context>; no break-out character survived
+     (encoded/stripped)` -- seen, but the app HTML-encodes or strips every
+     special character there (a real, correctly-escaped app -- not a bug).
+   - `reflected; context=<context>; trying payload`, followed (if nothing
+     made it to Confirmed) by a second line saying the break-out character(s)
+     survived but no payload variant confirmed unescaped -- check that row's
+     Edited attempts in Live Results to see exactly what was tried and how
+     the app handled each one.
+   - If you see NO such lines at all while browsing a page you know has
+     parameters: either the parameter's current value is too short/generic
+     to pass the initial filters (less than 3-4 chars, a path-like value, or
+     a low-signal boolean/enum -- Custom Attack bypasses this, since you
+     choose the payload directly), or "Live confirm while browsing" is OFF,
+     or the response's status code is >= 400 (error pages are skipped), or
+     the parameter was already probed once this session (each spot is only
+     auto-probed once per session -- restart the scan or reload the
+     extension to re-probe).
+
+If after checking the Output tab a parameter you believe is vulnerable shows
+`not reflected` or an encoded-only diagnostic, that is the engine's honest
+answer for that target as tested, not a silent failure -- try **Custom
+attack** with your own payload list against that exact parameter instead,
+or pull the Live Results row's Edited attempts to see the raw responses.
+
 **No automated test suite is committed to this repo** (`git ls-files` for
 anything test-related returns nothing, despite earlier revisions of this file
 claiming specific passing counts — that claim was never backed by a checked-in
