@@ -11,6 +11,13 @@ public final class XssFinding {
 
     public static final String STATUS_CONFIRMED = "Confirmed";
     public static final String STATUS_REFLECTED = "Reflected";
+    /** The probe/confirm request(s) for this spot never got a usable response
+     *  (connection failure, timeout, or an unhandled exception) -- the spot was
+     *  NOT actually tested, which is different from "tested and not vulnerable".
+     *  Surfaced so a run that is silently failing (dead proxy, blocked by a
+     *  WAF/firewall, target down) is visible in Live Results instead of just
+     *  looking like "nothing found". */
+    public static final String STATUS_ERROR = "Error";
 
     public final long time;
     public final String severity;   // High / Medium / Low / Info
@@ -31,6 +38,7 @@ public final class XssFinding {
     public int port;
     public boolean https;
     public String technique;      // the bypass technique that confirmed it (direct, double-URL-encoded, ...)
+    public int statusCode = -1;   // HTTP status code of the evidence response (-1 = unknown/no response)
 
     /** One request/response pair shown in the viewer (Original, Edited 1, ...). */
     public static final class Msg {

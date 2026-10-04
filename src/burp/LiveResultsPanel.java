@@ -171,7 +171,7 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
     }
 
     private void setColWidths() {
-        int[] w = {70, 70, 80, 180, 120, 360, 80};
+        int[] w = {70, 70, 80, 55, 180, 120, 360, 80};
         for (int i = 0; i < w.length && i < table.getColumnCount(); i++) {
             table.getColumnModel().getColumn(i).setPreferredWidth(w[i]);
         }
@@ -421,9 +421,10 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
                 return;
             }
             try (FileWriter w = new FileWriter(fc.getSelectedFile())) {
-                w.write("Time,Severity,Status,Context,Parameter,Method,Host,URL,Source,PoC\n");
+                w.write("Time,Severity,Status,Code,Context,Parameter,Method,Host,URL,Source,PoC\n");
                 for (XssFinding f : model.rows) {
                     w.write(csv(timeFmt.format(new Date(f.time))) + "," + csv(f.severity) + "," + csv(f.status)
+                            + "," + (f.statusCode > 0 ? String.valueOf(f.statusCode) : "")
                             + "," + csv(f.context) + "," + csv(f.parameter) + "," + csv(f.method)
                             + "," + csv(f.host) + "," + csv(f.url) + "," + csv(f.source) + "," + csv(f.poc) + "\n");
                 }
@@ -612,7 +613,7 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
     // ---- table model ----
 
     private class ResultsTableModel extends AbstractTableModel {
-        private final String[] cols = {"Time", "Severity", "Status", "Context", "Parameter", "URL", "Source"};
+        private final String[] cols = {"Time", "Severity", "Status", "Code", "Context", "Parameter", "URL", "Source"};
         private List<XssFinding> rows = new ArrayList<>();
 
         void setRows(List<XssFinding> r) {
@@ -637,10 +638,11 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
                 case 0: return timeFmt.format(new Date(f.time));
                 case 1: return f.severity;
                 case 2: return f.status;
-                case 3: return f.context;
-                case 4: return f.parameter;
-                case 5: return f.url;
-                case 6: return f.source;
+                case 3: return f.statusCode > 0 ? String.valueOf(f.statusCode) : "-";
+                case 4: return f.context;
+                case 5: return f.parameter;
+                case 6: return f.url;
+                case 7: return f.source;
                 default: return "";
             }
         }
@@ -656,7 +658,11 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
                 XssFinding f = model.getRow(row);
                 Color bg = Color.WHITE;
                 if (f != null) {
-                    if ("High".equals(f.severity)) {
+                    if (XssFinding.STATUS_ERROR.equals(f.status)) {
+                        // Distinct from both "High" and "clean" -- this spot was never
+                        // actually tested, which must not look like a scan result.
+                        bg = new Color(0xE6, 0xE6, 0xE6);
+                    } else if ("High".equals(f.severity)) {
                         bg = new Color(0xFD, 0xE7, 0xE9);
                     } else if ("Medium".equals(f.severity)) {
                         bg = new Color(0xFF, 0xF4, 0xDE);
@@ -665,6 +671,8 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
                     }
                     if (XssFinding.STATUS_CONFIRMED.equals(f.status) && col == 2) {
                         comp.setForeground(new Color(0xB0, 0x00, 0x20));
+                    } else if (XssFinding.STATUS_ERROR.equals(f.status) && col == 2) {
+                        comp.setForeground(new Color(0x60, 0x60, 0x60));
                     } else {
                         comp.setForeground(Color.BLACK);
                     }

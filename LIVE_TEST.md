@@ -56,7 +56,15 @@ not reflected). Reflected-but-not-exploitable spots are listed as grey
 ## Reading Live Results
 
 - **Confirmed** (red) = verified break-out. **Reflected** (grey) = seen but not
-  (yet) exploitable.
+  (yet) exploitable. **Error** (dark grey) = this spot was never actually
+  tested — the probe or verification request got no response at all (dead
+  target, connection reset, timeout, firewall drop). Treat an Error row as
+  "unknown", not "clean": it means the scan couldn't reach that spot, not that
+  it checked it and found nothing.
+- The **Code** column shows the HTTP status code of the evidence
+  response for each row (the confirmed PoC response for Confirmed rows, the
+  probed response for Reflected rows); it reads "-" when there was no
+  response to read a status from (Error rows).
 - Request on the left, response on the right; each pane's dropdown switches
   Original / Edited 1, 2, 3 … The injected value and the reflected payload are
   highlighted and scrolled to. Per-pane search with ▲/▼.

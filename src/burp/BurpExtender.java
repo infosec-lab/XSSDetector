@@ -902,6 +902,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         int scanned = 0;
         int paramsTested = 0;
         int reflectedParams = 0;
+        int errorCount = 0;
         List<String> allNotes = new ArrayList<>();
         try {
             if (contextualEngine == null) {
@@ -923,14 +924,17 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 }
                 paramsTested += stats.params;
                 reflectedParams += stats.reflected;
+                errorCount += stats.errors;
                 allNotes.addAll(stats.notes);
             }
             final int c = confirmed;
             final int s = scanned;
             final int pt = paramsTested;
             final int rp = reflectedParams;
+            final int ec = errorCount;
             callbacks.printOutput("[" + PLUGIN_NAME + "] Active XSS scan: " + s + " request(s), "
-                    + pt + " parameter(s) tested, " + rp + " reflected, " + c + " confirmed.");
+                    + pt + " parameter(s) tested, " + rp + " reflected, " + c + " confirmed, "
+                    + ec + " could not be tested (errors).");
             for (String note : allNotes) {
                 callbacks.printOutput("[" + PLUGIN_NAME + "]   - " + note);
             }
@@ -939,9 +943,18 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                   .append("Requests scanned: ").append(s).append('\n')
                   .append("Parameters tested: ").append(pt).append('\n')
                   .append("Reflected: ").append(rp).append('\n')
-                  .append("Confirmed XSS: ").append(c).append("\n\n");
+                  .append("Confirmed XSS: ").append(c).append('\n');
+            if (ec > 0) {
+                detail.append("Could not be tested (connection errors): ").append(ec)
+                      .append(" - see the Live Results tab (status = Error).\n");
+            }
+            detail.append('\n');
             if (c > 0) {
                 detail.append("See the Issues tab and the Live Results tab.");
+            } else if (ec > 0 && rp == 0) {
+                detail.append(ec).append(" parameter(s) got NO response at all (connection failed/timed\n")
+                      .append("out) and were never actually tested - this is not a clean result.\n")
+                      .append("Check connectivity/proxy settings and re-run.");
             } else if (rp > 0) {
                 detail.append("Parameters reflected but no break-out confirmed (filtered/encoded).\n")
                       .append("Reflected candidates are listed in the Live Results tab.");
@@ -987,6 +1000,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
         int paramsTested = 0;
         int reflected = 0;
         int confirmed = 0;
+        int errorCount = 0;
         int skippedType = 0;
         int skippedScope = 0;
         try {
@@ -1050,6 +1064,7 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
                 List<IScanIssue> issues = contextualEngine.scanRequest(rr, "Site map sweep", stats);
                 paramsTested += stats.params;
                 reflected += stats.reflected;
+                errorCount += stats.errors;
                 if (issues != null) {
                     for (IScanIssue issue : issues) {
                         if (reportIssueWithDedup(issue)) {
@@ -1064,17 +1079,19 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             }
 
             final int fe = endpoints, fp = paramsTested, fr = reflected, fc = confirmed,
-                    fst = skippedType, fss = skippedScope;
+                    fst = skippedType, fss = skippedScope, fec = errorCount;
             callbacks.printOutput("[" + PLUGIN_NAME + "] Site map sweep complete: " + fe + " endpoints, "
-                    + fp + " parameters, " + fr + " reflected, " + fc + " confirmed "
+                    + fp + " parameters, " + fr + " reflected, " + fc + " confirmed, " + fec + " errors "
                     + "(skipped " + fst + " by content-type, " + fss + " out of scope).");
             SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(panel,
                     "Site map sweep complete.\n\n"
                     + "Endpoints scanned: " + fe + (fe >= SITEMAP_MAX_ENDPOINTS ? " (capped)" : "") + "\n"
                     + "Parameters tested: " + fp + "\n"
                     + "Reflected: " + fr + "\n"
-                    + "Confirmed XSS: " + fc + "\n\n"
-                    + "Skipped: " + fst + " (content-type not enabled), "
+                    + "Confirmed XSS: " + fc + "\n"
+                    + (fec > 0 ? "Could not be tested (connection errors): " + fec
+                                 + " - see Live Results (status = Error)\n" : "")
+                    + "\nSkipped: " + fst + " (content-type not enabled), "
                     + fss + " (out of scope).\n\n"
                     + (fc > 0 ? "See the Issues tab and Live Results."
                              : "No XSS confirmed; reflected candidates (if any) are in Live Results."),
@@ -1284,6 +1301,13 @@ public class BurpExtender implements IBurpExtender, IScannerCheck, ITab, IHttpLi
             XssFinding f = new XssFinding(
                     normalizeSeverity(issue.getSeverity()), XssFinding.STATUS_CONFIRMED,
                     name, param, method, host, url, "Scanner", "", req, resp);
+            if (resp != null) {
+                try {
+                    f.statusCode = helpers.analyzeResponse(resp).getStatusCode();
+                } catch (Exception ignored) {
+                    // status code is best-effort
+                }
+            }
             FindingStore.get().add(f);
         } catch (Exception ignored) {
             // Live Results mirroring must never affect reporting

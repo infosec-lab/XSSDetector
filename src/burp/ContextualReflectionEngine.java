@@ -99,6 +99,10 @@ public class ContextualReflectionEngine {
                 if (pr.reflected) {
                     // reflected but no break-out (filtered/encoded) -> show in Live Results
                     recordReflectedFiltered(pname, "Scanner", pr, baseRequestResponse);
+                } else if (pr.error) {
+                    // couldn't even test it (connection failure/timeout) -> surface
+                    // this instead of silently looking like a clean "not reflected"
+                    recordProbeError(pname, "Scanner", pr, baseRequestResponse);
                 }
                 return issues;
             }
@@ -196,6 +200,22 @@ public class ContextualReflectionEngine {
         boolean reflected;       // the injected token came back in the response
         String contextLabel;     // where it landed (diagnostic, even when best == null)
         String diag = "not reflected"; // short human diagnostic for logging
+        boolean error;           // true when the probe COULDN'T be evaluated at all
+                                  // (no response / connection failure / exception) --
+                                  // distinct from a genuine "not reflected" result, so
+                                  // callers can surface it instead of going silent.
+    }
+
+    /** HTTP status code of a response, or -1 if unavailable (no response / unparseable). */
+    private int statusCodeOf(byte[] response) {
+        if (response == null) {
+            return -1;
+        }
+        try {
+            return helpers.analyzeResponse(response).getStatusCode();
+        } catch (Exception e) {
+            return -1;
+        }
     }
 
     private String bodyOf(byte[] respBytes, IResponseInfo respInfo) {
@@ -233,7 +253,8 @@ public class ContextualReflectionEngine {
             pr.probeRR = probeRR;
             pr.tag = tag;
             if (probeRR == null || probeRR.getResponse() == null) {
-                pr.diag = "no response to break-out probe";
+                pr.diag = "no response to break-out probe (connection failed / timed out)";
+                pr.error = true;
                 return pr;
             }
             byte[] respBytes = probeRR.getResponse();
@@ -292,11 +313,19 @@ public class ContextualReflectionEngine {
                             : ("reflected in " + pr.contextLabel + "; not an exploitable context");
                     return pr;
                 }
+            } else if (plainRR == null || plainRR.getResponse() == null) {
+                // The break-out probe above DID get a response but this follow-up
+                // plain-token verification request didn't -- a real connection
+                // problem (reset, timeout, server down), not "not reflected".
+                pr.diag = "no response to verification probe (connection failed / timed out)";
+                pr.error = true;
+                return pr;
             }
             pr.diag = "not reflected";
             return pr;
         } catch (Exception e) {
             pr.diag = "probe error: " + e.getMessage();
+            pr.error = true;
             return pr;
         }
     }
@@ -344,7 +373,7 @@ public class ContextualReflectionEngine {
                     continue;
                 }
                 String value = p.getValue();
-                if (value == null || value.length() < 3 || looksNavigational(value)) {
+                if (value == null || value.length() < 3 || looksNavigational(value) || isLowSignalValue(value)) {
                     continue;
                 }
                 String decoded = value;
@@ -370,6 +399,8 @@ public class ContextualReflectionEngine {
                 if (pr.best == null) {
                     if (pr.reflected) {
                         recordReflectedFiltered(name, source, pr, rr);
+                    } else if (pr.error) {
+                        recordProbeError(name, source, pr, rr);
                     }
                     done++;
                     continue;
@@ -401,7 +432,7 @@ public class ContextualReflectionEngine {
                     break;
                 }
                 String value = hseg.value;
-                if (value == null || value.length() < 3 || looksNavigational(value)) {
+                if (value == null || value.length() < 3 || looksNavigational(value) || isLowSignalValue(value)) {
                     continue;
                 }
                 if (body.indexOf(value) < 0) {
@@ -416,6 +447,8 @@ public class ContextualReflectionEngine {
                 if (pr.best == null) {
                     if (pr.reflected) {
                         recordReflectedFiltered(name, source, pr, rr);
+                    } else if (pr.error) {
+                        recordProbeError(name, source, pr, rr);
                     }
                     done++;
                     continue;
@@ -513,7 +546,7 @@ public class ContextualReflectionEngine {
                                              String body, MimeInfo mime, String method, String host,
                                              String url, IHttpService svc, IHttpRequestResponse rr,
                                              String source) {
-        if (value == null || value.length() < 4 || looksNavigational(value)) {
+        if (value == null || value.length() < 4 || looksNavigational(value) || isLowSignalValue(value)) {
             return false; // filenames/paths/URLs echoed back are not XSS candidates
         }
         String decoded = value;
@@ -554,6 +587,7 @@ public class ContextualReflectionEngine {
                 rr.getRequest(), rr.getResponse());
         xf.reqHighlight = value;    // the parameter/header value in the request
         xf.respHighlight = decoded; // where it is reflected in the response
+        xf.statusCode = statusCodeOf(rr.getResponse());
         if (svc != null) {
             xf.port = svc.getPort();
             xf.https = "https".equalsIgnoreCase(svc.getProtocol());
@@ -580,6 +614,7 @@ public class ContextualReflectionEngine {
         public int params;        // URL/body/cookie parameters tested
         public int reflected;     // parameters whose injection was reflected
         public int confirmed;     // parameters with a confirmed break-out
+        public int errors;        // parameters that could NOT be tested (connection failure/timeout)
         public final java.util.List<String> notes = new java.util.ArrayList<>();
     }
 
@@ -654,6 +689,10 @@ public class ContextualReflectionEngine {
                 stats.reflected++;
                 recordReflectedFiltered(name, source, pr, rr);
                 stats.notes.add("'" + name + "': " + pr.diag);
+            } else if (pr.error) {
+                stats.errors++;
+                recordProbeError(name, source, pr, rr);
+                stats.notes.add("'" + name + "': NOT TESTED - " + pr.diag);
             } else {
                 stats.notes.add("'" + name + "': " + pr.diag);
             }
@@ -889,6 +928,30 @@ public class ContextualReflectionEngine {
         }
         return s.contains("/")
                 || s.matches(".*\\.(html?|jspx?|php|aspx?|do|action|css|js|png|jpe?g|gif|svg|ico|json|xml|pdf|woff2?)$");
+    }
+
+    /** Values generic enough that finding them elsewhere on the page is pure
+     *  coincidence, not evidence the PARAMETER is reflected there -- booleans,
+     *  tiny digits, locale/sort-order flags and the like. A page with a
+     *  "debug": true somewhere in its own unrelated JS will otherwise look
+     *  "reflected" for every boolean-valued parameter on every request,
+     *  producing a misleading Live Results row and an active probe that can
+     *  never confirm anything (the probe replaces the value with its own
+     *  canary regardless of what was there, so this match carries no real
+     *  signal either way). Only gates the passive "is this worth probing"
+     *  pre-check -- an explicit Active XSS scan still tests every parameter
+     *  unconditionally, whatever its current value. */
+    private static final Set<String> LOW_SIGNAL_VALUES = new HashSet<>(Arrays.asList(
+        "true", "false", "1", "0", "-1", "yes", "no", "y", "n", "on", "off",
+        "null", "undefined", "none", "n/a", "na", "ok", "asc", "desc",
+        "male", "female", "m", "f", "en", "en-us", "en-gb", "light", "dark", "default"
+    ));
+
+    private static boolean isLowSignalValue(String v) {
+        if (v == null) {
+            return true;
+        }
+        return LOW_SIGNAL_VALUES.contains(v.trim().toLowerCase(Locale.ROOT));
     }
 
     // ------------------------------------------------------------------
@@ -1779,6 +1842,7 @@ public class ContextualReflectionEngine {
                 xf.reqHighlight = conf.injectedValue; // the injected probe value in the request
                 xf.respHighlight = f.poc;             // the payload as reflected in the response
                 xf.technique = conf.technique;        // which bypass technique confirmed it
+                xf.statusCode = statusCodeOf(evidence.getResponse());
                 if (svc != null) {
                     xf.port = svc.getPort();
                     xf.https = "https".equalsIgnoreCase(svc.getProtocol());
@@ -1857,6 +1921,7 @@ public class ContextualReflectionEngine {
                     baseRR != null ? baseRR.getResponse() : null);
             xf.reqHighlight = pr != null ? pr.tag : null;
             xf.respHighlight = pr != null ? pr.tag : null;
+            xf.statusCode = statusCodeOf(baseRR != null ? baseRR.getResponse() : null);
             if (svc != null) {
                 xf.port = svc.getPort();
                 xf.https = "https".equalsIgnoreCase(svc.getProtocol());
@@ -1917,6 +1982,7 @@ public class ContextualReflectionEngine {
                     baseRR != null ? baseRR.getResponse() : null);
             xf.reqHighlight = pr.tag;
             xf.respHighlight = pr.tag;
+            xf.statusCode = statusCodeOf(baseRR != null ? baseRR.getResponse() : null);
             if (svc != null) {
                 xf.port = svc.getPort();
                 xf.https = "https".equalsIgnoreCase(svc.getProtocol());
@@ -1927,6 +1993,59 @@ public class ContextualReflectionEngine {
             if (pr.probeRR != null && pr.probeRR.getRequest() != null) {
                 xf.messages.add(new XssFinding.Msg("Probe (reflection test)", pr.probeRR.getRequest(),
                         pr.probeRR.getResponse(), pr.tag, pr.tag));
+            }
+            FindingStore.get().add(xf);
+        } catch (Exception ignored) {
+            // reporting must never break detection
+        }
+    }
+
+    /**
+     * Record that a spot could NOT actually be tested (the probe or the
+     * verification request never got a usable response -- connection failure,
+     * timeout, or an unhandled exception). Without this, a target that is
+     * unreachable, down, or dropping requests behind a firewall/WAF looks
+     * identical in Live Results to a target that was tested and found clean,
+     * which is misleading: "0 confirmed" should mean "tested, nothing found",
+     * not "couldn't test it". Always recorded (not gated by verbose logging)
+     * so a silently-failing run is visible in the tab the user is watching,
+     * not just in Burp's separate Output log.
+     */
+    private void recordProbeError(String param, String source, ProbeResult pr, IHttpRequestResponse baseRR) {
+        try {
+            if (pr == null || !pr.error) {
+                return;
+            }
+            IHttpService svc = baseRR != null ? baseRR.getHttpService() : null;
+            String method = "";
+            String url = "";
+            String host = svc != null ? svc.getHost() : "";
+            if (baseRR != null) {
+                try {
+                    IRequestInfo ri = helpers.analyzeRequest(baseRR);
+                    method = ri.getMethod();
+                    url = ri.getUrl() != null ? ri.getUrl().toString() : "";
+                } catch (Exception ignored) {
+                    // best-effort
+                }
+            }
+            XssFinding xf = new XssFinding(
+                    "Info", XssFinding.STATUS_ERROR, "-", param,
+                    method, host, url, source,
+                    "NOT tested: " + pr.diag + ".",
+                    baseRR != null ? baseRR.getRequest() : null,
+                    baseRR != null ? baseRR.getResponse() : null);
+            xf.statusCode = statusCodeOf(baseRR != null ? baseRR.getResponse() : null);
+            if (svc != null) {
+                xf.port = svc.getPort();
+                xf.https = "https".equalsIgnoreCase(svc.getProtocol());
+            }
+            if (baseRR != null && baseRR.getRequest() != null) {
+                xf.messages.add(new XssFinding.Msg("Original", baseRR.getRequest(), baseRR.getResponse(), null, null));
+            }
+            if (pr.probeRR != null && pr.probeRR.getRequest() != null) {
+                xf.messages.add(new XssFinding.Msg("Probe (failed)", pr.probeRR.getRequest(),
+                        pr.probeRR.getResponse(), null, null));
             }
             FindingStore.get().add(xf);
         } catch (Exception ignored) {
