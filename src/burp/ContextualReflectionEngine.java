@@ -390,6 +390,49 @@ public class ContextualReflectionEngine {
                 }
                 done++;
             }
+
+            // Commonly-reflected headers (User-Agent, Referer, X-Forwarded-*,
+            // Origin, Host, ...): same bounded, "already reflected" gate as
+            // parameters above, so browse-time load stays light while this
+            // otherwise-invisible class of reflected XSS still gets confirmed
+            // just by browsing, exactly like URL/body/cookie parameters do.
+            for (HeaderSeg hseg : testableHeaderSegs(baseRequest)) {
+                if (done >= 15) {
+                    break;
+                }
+                String value = hseg.value;
+                if (value == null || value.length() < 3 || looksNavigational(value)) {
+                    continue;
+                }
+                if (body.indexOf(value) < 0) {
+                    continue; // not reflected -> do not probe
+                }
+                String key = host + "|" + path + "|header|" + hseg.name;
+                if (!liveProbed.add(key)) {
+                    continue; // already probed this spot in this session
+                }
+                final String name = hseg.name;
+                ProbeResult pr = probe(hseg.injector, service);
+                if (pr.best == null) {
+                    if (pr.reflected) {
+                        recordReflectedFiltered(name, source, pr, rr);
+                    }
+                    done++;
+                    continue;
+                }
+                Confirmation conf = confirm(hseg.injector, service, pr.best);
+                if (conf != null && conf.confirmed) {
+                    IScanIssue issue = buildDynamicIssue(name, "HTTP header", source, pr.best, conf, rr, pr);
+                    if (issue != null) {
+                        found.add(issue);
+                        callbacks.printOutput("[XSSDetector] Live-confirmed reflected XSS: header '" + name
+                                + "' (" + pr.best.contextLabel + ") at " + host + path);
+                    }
+                } else {
+                    recordTestedReflection(name, source, pr.best, conf, pr, rr);
+                }
+                done++;
+            }
         } catch (Exception e) {
             if (settings != null && settings.getVerboseLogging()) {
                 callbacks.printError("[XSSDetector] liveConfirm: " + e.getMessage());
@@ -437,61 +480,86 @@ public class ContextualReflectionEngine {
                 if (reported >= 10) {
                     break; // keep the browse feed light
                 }
-                String value = p.getValue();
-                if (value == null || value.length() < 4) {
-                    continue;
+                if (recordPassiveIfReflected(p.getName(), p.getValue(), true, body, mime,
+                        method, host, url, svc, rr, source)) {
+                    reported++;
                 }
-                if (looksNavigational(value)) {
-                    continue; // filenames/paths/URLs echoed back are not XSS candidates
+            }
+            // Commonly-reflected headers (User-Agent, Referer, X-Forwarded-*,
+            // Origin, Host, ...): the same baseline Info feed as parameters,
+            // since Burp's IParameter model never surfaces these on its own.
+            for (HeaderSeg hseg : testableHeaderSegs(rr.getRequest())) {
+                if (reported >= 10) {
+                    break;
                 }
-                String decoded = value;
-                try {
-                    String d = helpers.urlDecode(value);
-                    if (d != null) {
-                        decoded = d;
-                    }
-                } catch (Exception ignored) {
-                    // use raw value
+                if (recordPassiveIfReflected("Header: " + hseg.name, hseg.value, false, body, mime,
+                        method, host, url, svc, rr, source)) {
+                    reported++;
                 }
-                int idx = body.indexOf(decoded);
-                if (idx < 0 && !decoded.equals(value)) {
-                    idx = body.indexOf(value);
-                }
-                if (idx < 0) {
-                    continue;
-                }
-                // Classify the reflection context. JSON/JS responses use the
-                // JSON-aware classifier instead of the HTML tokenizer, so the
-                // realtime feed labels them correctly (JSON value / JSONP).
-                String label;
-                if (mime.isJson || mime.isJavaScript) {
-                    label = jsonPassiveLabel(body, idx, mime);
-                } else {
-                    CtxResult c = detectContext(body, idx);
-                    if (c.ctx == Ctx.UNKNOWN || c.ctx == Ctx.PLAINTEXT) {
-                        continue; // nothing actionable to flag
-                    }
-                    label = contextLabel(c);
-                }
-                XssFinding xf = new XssFinding(
-                        "Info", XssFinding.STATUS_REFLECTED, label, p.getName(),
-                        method, host, url, source,
-                        "Reflection seen while browsing - run an active scan to confirm.",
-                        rr.getRequest(), rr.getResponse());
-                xf.reqHighlight = value;    // the parameter value in the request
-                xf.respHighlight = decoded; // where it is reflected in the response
-                if (svc != null) {
-                    xf.port = svc.getPort();
-                    xf.https = "https".equalsIgnoreCase(svc.getProtocol());
-                }
-                FindingStore.get().add(xf);
-                reported++;
             }
         } catch (Exception e) {
             if (settings != null && settings.getVerboseLogging()) {
                 callbacks.printError("[ContextualReflectionEngine] passive: " + e.getMessage());
             }
         }
+    }
+
+    /** Shared body of the passive feed loop: checks whether {@code value} is
+     *  reflected in {@code body} and, if so, classifies the context and records
+     *  an Info row. {@code urlDecodeFirst} is true for query/body/cookie
+     *  parameters (which travel URL-encoded) and false for headers (which do
+     *  not). Returns true if a row was recorded. */
+    private boolean recordPassiveIfReflected(String name, String value, boolean urlDecodeFirst,
+                                             String body, MimeInfo mime, String method, String host,
+                                             String url, IHttpService svc, IHttpRequestResponse rr,
+                                             String source) {
+        if (value == null || value.length() < 4 || looksNavigational(value)) {
+            return false; // filenames/paths/URLs echoed back are not XSS candidates
+        }
+        String decoded = value;
+        if (urlDecodeFirst) {
+            try {
+                String d = helpers.urlDecode(value);
+                if (d != null) {
+                    decoded = d;
+                }
+            } catch (Exception ignored) {
+                // use raw value
+            }
+        }
+        int idx = body.indexOf(decoded);
+        if (idx < 0 && !decoded.equals(value)) {
+            idx = body.indexOf(value);
+        }
+        if (idx < 0) {
+            return false;
+        }
+        // Classify the reflection context. JSON/JS responses use the
+        // JSON-aware classifier instead of the HTML tokenizer, so the
+        // realtime feed labels them correctly (JSON value / JSONP).
+        String label;
+        if (mime.isJson || mime.isJavaScript) {
+            label = jsonPassiveLabel(body, idx, mime);
+        } else {
+            CtxResult c = detectContext(body, idx);
+            if (c.ctx == Ctx.UNKNOWN || c.ctx == Ctx.PLAINTEXT) {
+                return false; // nothing actionable to flag
+            }
+            label = contextLabel(c);
+        }
+        XssFinding xf = new XssFinding(
+                "Info", XssFinding.STATUS_REFLECTED, label, name,
+                method, host, url, source,
+                "Reflection seen while browsing - run an active scan to confirm.",
+                rr.getRequest(), rr.getResponse());
+        xf.reqHighlight = value;    // the parameter/header value in the request
+        xf.respHighlight = decoded; // where it is reflected in the response
+        if (svc != null) {
+            xf.port = svc.getPort();
+            xf.https = "https".equalsIgnoreCase(svc.getProtocol());
+        }
+        FindingStore.get().add(xf);
+        return true;
     }
 
     /**
@@ -550,6 +618,19 @@ public class ContextualReflectionEngine {
                     break;
                 }
                 testInjection(seg.name, "URL path", seg.injector, seg.value,
+                        service, rr, source, method, host, url, stats, found);
+                done++;
+            }
+            // 3) Commonly-reflected request headers (User-Agent, Referer,
+            //    X-Forwarded-*, Origin, Host, ...) -- not an IParameter type, so
+            //    they are otherwise never probed; this is the one class of
+            //    reflected XSS (log/debug/admin viewers, Host-header-driven link
+            //    generation, CORS echo) the parameter/path loops above cannot see.
+            for (HeaderSeg hseg : testableHeaderSegs(baseRequest)) {
+                if (done >= 40) {
+                    break;
+                }
+                testInjection("Header: " + hseg.name, "HTTP header", hseg.injector, hseg.value,
                         service, rr, source, method, host, url, stats, found);
                 done++;
             }
@@ -656,6 +737,98 @@ public class ContextualReflectionEngine {
             // best-effort path parsing
         }
         return segs;
+    }
+
+    /**
+     * Request headers that applications commonly echo back unescaped into a
+     * response -- log/debug/admin viewers, "your browser is ..." banners,
+     * CORS-echo responses, and Host-header-driven link/canonical-URL
+     * generation. Burp's {@link IParameter} model (URL/body/cookie/JSON/XML/
+     * multipart) never surfaces these, so without testing them explicitly this
+     * entire class of reflected XSS is invisible no matter how good the
+     * confirm-stage bypass logic is -- the gap is upstream, at insertion-point
+     * selection, not at confirmation.
+     */
+    private static final String[] TESTABLE_HEADERS = {
+        "User-Agent", "Referer", "Origin", "Host",
+        "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port",
+        "X-Original-URL", "X-Rewrite-URL", "X-Real-IP", "X-Client-IP", "True-Client-IP",
+        "Accept-Language"
+    };
+
+    /** A request header turned into an injectable insertion point. */
+    private static final class HeaderSeg {
+        final String name;
+        final String value;
+        final Injector injector;
+        HeaderSeg(String name, String value, Injector injector) {
+            this.name = name; this.value = value; this.injector = injector;
+        }
+    }
+
+    /**
+     * Find every header in {@link #TESTABLE_HEADERS} present on the request and
+     * build a byte-level injector for each, rewriting just that header's value
+     * at its exact offset -- the same approach already used for URL/cookie
+     * parameters, so no re-encoding can stop a break-out character from
+     * reaching the application. Header values are never URL-encoded on the
+     * wire, so the raw bytes are written as-is (CR/LF stripped so an injected
+     * payload can never smuggle a second header or split the response).
+     */
+    private List<HeaderSeg> testableHeaderSegs(final byte[] baseRequest) {
+        List<HeaderSeg> out = new ArrayList<>();
+        try {
+            String req = new String(baseRequest, StandardCharsets.ISO_8859_1);
+            int bodyStart = req.indexOf("\r\n\r\n");
+            int headEnd = bodyStart < 0 ? req.length() : bodyStart;
+            int lineStart = req.indexOf("\r\n");
+            if (lineStart < 0) {
+                return out;
+            }
+            lineStart += 2; // past the request line
+            while (lineStart < headEnd) {
+                int lineEnd = req.indexOf("\r\n", lineStart);
+                if (lineEnd < 0 || lineEnd > headEnd) {
+                    lineEnd = headEnd;
+                }
+                String line = req.substring(lineStart, lineEnd);
+                int colon = line.indexOf(':');
+                if (colon > 0) {
+                    String hname = line.substring(0, colon).trim();
+                    for (String want : TESTABLE_HEADERS) {
+                        if (!want.equalsIgnoreCase(hname)) {
+                            continue;
+                        }
+                        int valFieldStart = lineStart + colon + 1;
+                        int lead = 0;
+                        while (valFieldStart + lead < lineEnd && req.charAt(valFieldStart + lead) == ' ') {
+                            lead++;
+                        }
+                        final int vs = valFieldStart + lead;
+                        final int ve = lineEnd;
+                        String value = req.substring(vs, ve);
+                        if (!value.isEmpty()) {
+                            final String finalName = want;
+                            Injector inj = v -> {
+                                String safe = v.replace("\r", "").replace("\n", "");
+                                byte[] enc = safe.getBytes(StandardCharsets.ISO_8859_1);
+                                byte[] res = new byte[vs + enc.length + (baseRequest.length - ve)];
+                                System.arraycopy(baseRequest, 0, res, 0, vs);
+                                System.arraycopy(enc, 0, res, vs, enc.length);
+                                System.arraycopy(baseRequest, ve, res, vs + enc.length, baseRequest.length - ve);
+                                return res;
+                            };
+                            out.add(new HeaderSeg(finalName, value, inj));
+                        }
+                        break;
+                    }
+                }
+                lineStart = lineEnd + 2;
+            }
+        } catch (Exception ignored) {
+            // best-effort header parsing
+        }
+        return out;
     }
 
     /** Lightweight JSON/JSONP context label for the realtime passive feed. */

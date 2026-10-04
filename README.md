@@ -46,6 +46,12 @@ reproducible findings, with no score thresholds and near-zero false positives.
   execution, JSON bodies rendered as HTML via wrong/sniffable `Content-Type`,
   while correctly treating strict `application/json` +
   `X-Content-Type-Options: nosniff` as non-exploitable
+- **Header-reflected XSS** — `User-Agent`, `Referer`, `Origin`, `Host`,
+  `X-Forwarded-For/-Host/-Proto/-Port`, `X-Original-URL`, `X-Rewrite-URL`,
+  `X-Real-IP`/`X-Client-IP`/`True-Client-IP`, and `Accept-Language` are probed
+  and confirmed the same way as URL/body/cookie parameters — not just Burp's
+  `IParameter` set — so log/debug/admin viewers and Host-header-driven link
+  generation are covered, not just query/body/cookie reflection
 - **Dynamic, evidence-only reports** — each finding shows live data only: the
   reflection context, a per-character break-out table, the confirmed PoC, and the
   live reflected snippet (no boilerplate background or remediation text)

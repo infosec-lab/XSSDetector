@@ -7,7 +7,10 @@ the end.
 ## What it does now
 
 One engine does the detection: the **Contextual Reflection Engine**. For every
-URL, body, cookie, **JSON, XML and multipart** parameter it
+URL, body, cookie, **JSON, XML and multipart** parameter, URL path segment, and
+commonly-reflected **request header** (`User-Agent`, `Referer`, `Origin`, `Host`,
+`X-Forwarded-For/-Host/-Proto/-Port`, `X-Original-URL`, `X-Rewrite-URL`,
+`X-Real-IP`/`X-Client-IP`/`True-Client-IP`, `Accept-Language`) it
 
 1. sends a canary + break-out probe and measures which characters survive,
 2. classifies the exact reflection context (HTML text, attribute, tag position,
