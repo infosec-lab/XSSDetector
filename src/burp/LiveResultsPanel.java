@@ -359,8 +359,10 @@ public class LiveResultsPanel extends JPanel implements FindingStore.Listener {
         String poc = confirmed ? "&nbsp; Payload: <code>" + esc(f.poc) + "</code>" : "";
         String via = (confirmed && f.technique != null && !f.technique.isEmpty() && !"direct".equals(f.technique))
                 ? " &nbsp;|&nbsp; via: <b>" + esc(f.technique) + "</b>" : "";
+        String csp = (confirmed && f.cspCaveat != null && !f.cspCaveat.isEmpty())
+                ? "<br><font color='#B8860B'>&#9888; " + esc(f.cspCaveat) + "</font>" : "";
         pocBar.setText("<html>" + label + " &nbsp;|&nbsp; Parameter: <b>" + esc(f.parameter)
-                + "</b> &nbsp;|&nbsp; Context: " + esc(f.context) + via + poc + "</html>");
+                + "</b> &nbsp;|&nbsp; Context: " + esc(f.context) + via + poc + csp + "</html>");
     }
 
     private static String esc(String s) {

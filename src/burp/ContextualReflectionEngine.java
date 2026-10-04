@@ -888,6 +888,18 @@ public class ContextualReflectionEngine {
         return "JSON value";
     }
 
+    /** One step down (High->Medium->Low), used when a CSP caveat means the
+     *  confirmed break-out likely won't execute as-is in a real browser. */
+    private static String downgradeSeverity(String severity) {
+        if ("High".equals(severity)) {
+            return "Medium";
+        }
+        if ("Medium".equals(severity)) {
+            return "Low";
+        }
+        return severity;
+    }
+
     private String contextLabel(CtxResult c) {
         switch (c.ctx) {
             case HTML_TEXT: return "HTML text";
@@ -1640,6 +1652,7 @@ public class ContextualReflectionEngine {
                     conf.confirmed = true;
                     conf.snippet = buildSnippet(bodyStr, Math.max(0, l - 24),
                             v.expect.length() + lm.length() + rm.length() + 48);
+                    conf.cspCaveat = cspCaveat(info, v.expect);
                     return conf;
                 }
             }
@@ -1812,6 +1825,15 @@ public class ContextualReflectionEngine {
                 f.poc = conf.poc;
             }
 
+            // The break-out is real, but if this SAME response's own CSP would
+            // stop a real browser from running it, an unqualified High-severity
+            // "working alert()" claim is itself a false positive. Downgrade and
+            // caveat rather than suppress -- the markup injection is still a
+            // genuine finding even when script execution needs a CSP bypass.
+            if (conf.cspCaveat != null) {
+                f.severity = downgradeSeverity(f.severity);
+            }
+
             // Markers over the live request value and the reflected payload.
             List<int[]> reqMarkers = markers(evidence.getRequest(), conf.injectedValue);
             List<int[]> respMarkers = markers(evidence.getResponse(), f.poc);
@@ -1825,6 +1847,9 @@ public class ContextualReflectionEngine {
             // Professional, Burp-consistent issue name; parameter/context in the detail.
             String name = "Cross-Site Scripting (Reflected)";
             String detail = renderDetail(f, param, insType, conf.technique);
+            if (conf.cspCaveat != null) {
+                detail += "<br><br><b>CSP caveat:</b> " + esc(conf.cspCaveat);
+            }
 
             // Feed the Live Results view (confirmed by live PoC).
             try {
@@ -1842,6 +1867,7 @@ public class ContextualReflectionEngine {
                 xf.reqHighlight = conf.injectedValue; // the injected probe value in the request
                 xf.respHighlight = f.poc;             // the payload as reflected in the response
                 xf.technique = conf.technique;        // which bypass technique confirmed it
+                xf.cspCaveat = conf.cspCaveat;         // null unless the page's own CSP likely blocks it
                 xf.statusCode = statusCodeOf(evidence.getResponse());
                 if (svc != null) {
                     xf.port = svc.getPort();
@@ -2281,6 +2307,78 @@ public class ContextualReflectionEngine {
                 || c.contains("javascript") || c.contains("xml") || c.contains("text");
     }
 
+    /**
+     * A finding is only as good as the claim it makes. "Confirmed" here means
+     * the exact PoC came back reflected verbatim and unescaped -- but if the
+     * SAME response sets a Content-Security-Policy that would stop a
+     * standards-compliant browser from ever running it, reporting unqualified
+     * High-severity "working alert()" is itself a false claim. This is a
+     * conservative, clearly-labeled HEURISTIC (not a definitive CSP bypass
+     * analysis -- nonces, hashes, strict-dynamic and report-only policies are
+     * not modeled in full) used only to add an honest caveat and lower
+     * severity, never to suppress a genuine HTML/markup-injection finding
+     * (the break-out is still real even if script execution is blocked).
+     *
+     * Brand-new attacker-controlled markup (a fresh {@code <script>}/
+     * {@code <img onerror>}/{@code <svg onload>} tag -- the vector pocVariants()
+     * falls back to for almost every context) can NEVER carry the page's own
+     * nonce or match a content hash, so a script-src/default-src directive
+     * without {@code 'unsafe-inline'} blocks it outright. A payload injected
+     * INTO an existing inline script/handler is less clear-cut (nonce-based
+     * CSP still covers the whole element; hash-based CSP does not, since
+     * editing the content changes its hash) and is hedged accordingly.
+     */
+    private String cspCaveat(IResponseInfo respInfo, String poc) {
+        try {
+            String csp = null;
+            for (String h : respInfo.getHeaders()) {
+                if (h.toLowerCase(Locale.ROOT).startsWith("content-security-policy:")) {
+                    csp = h.substring(h.indexOf(':') + 1).trim();
+                    break; // first CSP wins; a second one can only narrow further
+                }
+            }
+            if (csp == null || csp.isEmpty()) {
+                return null;
+            }
+            String directive = cspDirective(csp, "script-src");
+            if (directive == null) {
+                directive = cspDirective(csp, "default-src");
+            }
+            if (directive == null) {
+                return null; // nothing restricts script execution here
+            }
+            String dLow = directive.toLowerCase(Locale.ROOT);
+            if (dLow.contains("'unsafe-inline'")) {
+                return null; // inline script/handlers explicitly allowed
+            }
+            boolean newTag = poc != null && poc.trim().startsWith("<");
+            String policy = directive.trim();
+            if (newTag) {
+                return "Content-Security-Policy restricts script execution (" + policy + "); "
+                        + "this PoC injects a brand-new tag, which no nonce or hash on the page's "
+                        + "OWN scripts can cover, so a standards-compliant browser will NOT run it "
+                        + "as-is -- a separate CSP bypass would be needed.";
+            }
+            return "Content-Security-Policy restricts script execution (" + policy + "); "
+                    + "this PoC edits an EXISTING inline script/handler, so it may still run under "
+                    + "nonce-based CSP (same nonce covers the whole element) but will likely be "
+                    + "blocked under hash-based CSP (editing the content invalidates its hash).";
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String cspDirective(String csp, String name) {
+        for (String part : csp.split(";")) {
+            String p = part.trim();
+            if (p.regionMatches(true, 0, name, 0, name.length())
+                    && (p.length() == name.length() || Character.isWhitespace(p.charAt(name.length())))) {
+                return p.substring(name.length()).trim();
+            }
+        }
+        return null;
+    }
+
     private MimeInfo classifyMime(IResponseInfo respInfo) {
         MimeInfo m = new MimeInfo();
         String ct = "";
@@ -2391,6 +2489,8 @@ public class ContextualReflectionEngine {
         String technique = "direct";          // which bypass technique confirmed it
         boolean confirmed;
         String snippet;
+        String cspCaveat;  // set when the confirming response's own CSP would likely
+                            // stop this exact payload from executing in a real browser
         final List<Attempt> attempts = new ArrayList<>(); // every variant tried
     }
 

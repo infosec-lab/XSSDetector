@@ -52,6 +52,13 @@ reproducible findings, with no score thresholds and near-zero false positives.
   and confirmed the same way as URL/body/cookie parameters — not just Burp's
   `IParameter` set — so log/debug/admin viewers and Host-header-driven link
   generation are covered, not just query/body/cookie reflection
+- **CSP-aware confirmation** — a confirmed break-out is cross-checked against
+  the *same response's* own `Content-Security-Policy`. If the policy would
+  stop a real browser from running that exact PoC (no `'unsafe-inline'`, and
+  the PoC is attacker-controlled markup no nonce/hash can cover), the finding
+  is kept — the markup injection is still real — but downgraded a severity
+  level with an explicit caveat, instead of overstating a blocked payload as
+  an unqualified "confirmed working alert()"
 - **Dynamic, evidence-only reports** — each finding shows live data only: the
   reflection context, a per-character break-out table, the confirmed PoC, and the
   live reflected snippet (no boilerplate background or remediation text)

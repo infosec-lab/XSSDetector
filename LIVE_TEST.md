@@ -65,6 +65,13 @@ not reflected). Reflected-but-not-exploitable spots are listed as grey
   response for each row (the confirmed PoC response for Confirmed rows, the
   probed response for Reflected rows); it reads "-" when there was no
   response to read a status from (Error rows).
+- A yellow **⚠ caveat line** under the PoC bar means the confirming
+  response's own `Content-Security-Policy` likely blocks this exact payload
+  in a real browser (no `'unsafe-inline'`, and the PoC is attacker-controlled
+  markup). The break-out itself is still genuine — HTML/markup injection is
+  real either way — so the row stays Confirmed, just one severity level
+  lower, instead of silently overstating a CSP-blocked payload as a
+  guaranteed working `alert()`.
 - Request on the left, response on the right; each pane's dropdown switches
   Original / Edited 1, 2, 3 … The injected value and the reflected payload are
   highlighted and scrolled to. Per-pane search with ▲/▼.

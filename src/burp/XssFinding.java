@@ -39,6 +39,7 @@ public final class XssFinding {
     public boolean https;
     public String technique;      // the bypass technique that confirmed it (direct, double-URL-encoded, ...)
     public int statusCode = -1;   // HTTP status code of the evidence response (-1 = unknown/no response)
+    public String cspCaveat;      // null unless the response's own CSP likely blocks this exact PoC
 
     /** One request/response pair shown in the viewer (Original, Edited 1, ...). */
     public static final class Msg {
